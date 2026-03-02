@@ -51,18 +51,23 @@ class PtyRunner(ProcessRunner):
 
     def __init__(self, command: str, cwd: str | None, env: dict | None):
         master_fd, slave_fd = pty.openpty()
-        # Set a reasonable default window size (80x24).
-        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
-        self._process = subprocess.Popen(
-            command,
-            shell=True,
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            cwd=cwd,
-            env=env,
-            start_new_session=True,
-        )
+        try:
+            # Set a reasonable default window size (80x24).
+            fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+            self._process = subprocess.Popen(
+                command,
+                shell=True,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                cwd=cwd,
+                env=env,
+                start_new_session=True,
+            )
+        except Exception:
+            os.close(slave_fd)
+            os.close(master_fd)
+            raise
         os.close(slave_fd)
         self._master_fd = master_fd
 

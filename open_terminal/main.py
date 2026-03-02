@@ -24,7 +24,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
-from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, LOG_DIR
+from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, LOG_DIR, MAX_TERMINAL_SESSIONS
 from open_terminal.runner import PipeRunner, ProcessRunner, create_runner
 
 try:
@@ -69,7 +69,7 @@ async def verify_api_key(
 app = FastAPI(
     title="Open Terminal",
     description="A remote terminal API.",
-    version="0.7.1",
+    version="0.7.2",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -1140,6 +1140,7 @@ def _cleanup_session(session_id: str):
             process.kill()
 
 
+
 @app.post("/api/terminals", dependencies=[Depends(verify_api_key)], include_in_schema=False)
 async def create_terminal(request: Request):
     """Create a new terminal session and return its ID."""
@@ -1148,20 +1149,44 @@ async def create_terminal(request: Request):
             {"error": "PTY not available on this platform"}, status_code=503
         )
 
-    session_id = str(_uuid.uuid4())[:8]
-    master_fd, slave_fd = pty.openpty()
-    fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    # Prune dead sessions before checking limit
+    dead = [sid for sid, s in _terminal_sessions.items() if s["process"].poll() is not None]
+    for sid in dead:
+        _cleanup_session(sid)
 
-    shell = os.environ.get("SHELL", "/bin/sh")
-    process = subprocess.Popen(
-        [shell],
-        stdin=slave_fd,
-        stdout=slave_fd,
-        stderr=slave_fd,
-        cwd=os.getcwd(),
-        env=os.environ.copy(),
-        start_new_session=True,
-    )
+    if len(_terminal_sessions) >= MAX_TERMINAL_SESSIONS:
+        return JSONResponse(
+            {"error": f"Maximum number of terminal sessions ({MAX_TERMINAL_SESSIONS}) reached"},
+            status_code=429,
+        )
+
+    session_id = str(_uuid.uuid4())[:8]
+
+    try:
+        master_fd, slave_fd = pty.openpty()
+    except OSError:
+        return JSONResponse(
+            {"error": "Out of PTY devices — too many active terminals or processes"},
+            status_code=503,
+        )
+
+    try:
+        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+
+        shell = os.environ.get("SHELL", "/bin/sh")
+        process = subprocess.Popen(
+            [shell],
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            cwd=os.getcwd(),
+            env=os.environ.copy(),
+            start_new_session=True,
+        )
+    except Exception:
+        os.close(slave_fd)
+        os.close(master_fd)
+        raise
     os.close(slave_fd)
 
     # Set non-blocking

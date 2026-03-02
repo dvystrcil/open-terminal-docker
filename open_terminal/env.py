@@ -58,3 +58,10 @@ BINARY_FILE_MIME_PREFIXES = [
     ).split(",")
     if p.strip()
 ]
+
+MAX_TERMINAL_SESSIONS = int(
+    os.environ.get(
+        "OPEN_TERMINAL_MAX_SESSIONS",
+        config.get("max_terminal_sessions", "16"),
+    )
+)
