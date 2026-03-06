@@ -217,7 +217,7 @@ async def _log_process(background_process: BackgroundProcess):
             await aiofiles.os.makedirs(
                 os.path.dirname(background_process.log_path), exist_ok=True
             )
-            log_file = await aiofiles.open(background_process.log_path, "a")
+            log_file = await aiofiles.open(background_process.log_path, "a", encoding="utf-8")
             await log_file.write(
                 json.dumps(
                     {
@@ -268,7 +268,7 @@ async def _read_log(
     if not log_path or not await aiofiles.os.path.isfile(log_path):
         return entries, 0, False
 
-    async with aiofiles.open(log_path) as f:
+    async with aiofiles.open(log_path, encoding="utf-8") as f:
         lines = await f.readlines()
 
     for line in lines:
@@ -444,7 +444,7 @@ async def read_file(
         raise HTTPException(status_code=404, detail="File not found")
 
     try:
-        async with aiofiles.open(target, "r", errors="strict") as f:
+        async with aiofiles.open(target, "r", encoding="utf-8", errors="strict") as f:
             content = await f.read()
             lines = content.splitlines(keepends=True)
     except (UnicodeDecodeError, ValueError):
@@ -554,7 +554,7 @@ async def write_file(request: WriteRequest):
     target = os.path.abspath(request.path)
     try:
         await aiofiles.os.makedirs(os.path.dirname(target), exist_ok=True)
-        async with aiofiles.open(target, "w") as f:
+        async with aiofiles.open(target, "w", encoding="utf-8") as f:
             await f.write(request.content)
     except OSError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -642,7 +642,7 @@ async def replace_file_content(request: ReplaceRequest):
         raise HTTPException(status_code=404, detail="File not found")
 
     try:
-        async with aiofiles.open(target, "r", errors="replace") as f:
+        async with aiofiles.open(target, "r", encoding="utf-8", errors="replace") as f:
             content = await f.read()
     except OSError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -676,7 +676,7 @@ async def replace_file_content(request: ReplaceRequest):
             content = content.replace(chunk.target, chunk.replacement)
 
     try:
-        async with aiofiles.open(target, "w") as f:
+        async with aiofiles.open(target, "w", encoding="utf-8") as f:
             await f.write(content)
     except OSError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -742,7 +742,7 @@ async def grep_search(
             if truncated:
                 return
             try:
-                with open(file_path, "r", errors="strict") as f:
+                with open(file_path, "r", encoding="utf-8", errors="strict") as f:
                     for line_number, line in enumerate(f, 1):
                         if pattern.search(line):
                             if match_per_line:

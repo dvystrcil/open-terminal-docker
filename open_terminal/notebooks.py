@@ -145,7 +145,7 @@ def create_notebooks_router(verify_api_key) -> APIRouter:
             raise HTTPException(status_code=404, detail=f"Notebook not found: {path}")
 
         # Read and parse the notebook
-        async with aiofiles.open(path) as f:
+        async with aiofiles.open(path, encoding="utf-8") as f:
             content = await f.read()
 
         try:
@@ -239,7 +239,7 @@ def create_notebooks_router(verify_api_key) -> APIRouter:
         # Save notebook to disk
         try:
             nb_json = nbformat.writes(nb)
-            async with aiofiles.open(session.path, "w") as f:
+            async with aiofiles.open(session.path, "w", encoding="utf-8") as f:
                 await f.write(nb_json)
         except Exception:
             pass  # non-fatal

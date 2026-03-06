@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.1] - 2026-03-06
+
+### Fixed
+
+- 🌐 **UTF-8 encoding on Windows** — all text file I/O now explicitly uses UTF-8 encoding instead of the system default. Fixes Chinese (and other non-ASCII) content being written as GB2312 on Chinese Windows, which broke tool-call chaining and produced garbled files. ([#21](https://github.com/open-webui/open-terminal/issues/21))
+
 ## [0.10.0] - 2026-03-05
 
 ### Added
