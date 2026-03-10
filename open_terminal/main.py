@@ -24,7 +24,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
-from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_NOTEBOOKS, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, LOG_DIR, MAX_TERMINAL_SESSIONS, MULTI_USER, TERMINAL_TERM
+from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_NOTEBOOKS, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, LOG_DIR, MAX_TERMINAL_SESSIONS, MULTI_USER, OPEN_TERMINAL_INFO, TERMINAL_TERM
 from open_terminal.utils.runner import PipeRunner, ProcessRunner, create_runner
 from open_terminal.utils.fs import UserFS
 
@@ -372,6 +372,19 @@ async def get_config():
             "notebooks": ENABLE_NOTEBOOKS,
         },
     }
+
+
+if OPEN_TERMINAL_INFO:
+
+    @app.get(
+        "/info",
+        operation_id="get_info",
+        summary="Get environment info",
+        description="Return operator-provided information about this environment. Use this to understand the system you are working with.",
+        dependencies=[Depends(verify_api_key)],
+    )
+    async def get_info():
+        return {"info": OPEN_TERMINAL_INFO}
 
 
 # ---------------------------------------------------------------------------

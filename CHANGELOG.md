@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.6] - 2026-03-10
+
+### Added
+
+- ℹ️ **Conditional `/info` endpoint** — new `OPEN_TERMINAL_INFO` environment variable (or `info` in config.toml) registers a `GET /info` endpoint that returns operator-provided context to the AI. Use it to describe the environment (e.g. container base OS, available tools, GPU access). When the variable is unset, the endpoint is not registered.
+
 ## [0.11.5] - 2026-03-09
 
 ### Fixed

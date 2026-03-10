@@ -108,3 +108,10 @@ UVICORN_LOOP = os.environ.get(
     "OPEN_TERMINAL_UVICORN_LOOP",
     config.get("uvicorn_loop", "auto"),
 )
+
+OPEN_TERMINAL_INFO = os.environ.get(
+    "OPEN_TERMINAL_INFO",
+    config.get("info", ""),
+)
+
+
