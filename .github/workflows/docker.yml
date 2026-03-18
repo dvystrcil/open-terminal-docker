@@ -23,12 +23,15 @@ jobs:
           - name: default
             file: Dockerfile
             suffix: ""
+            short_tag: "latest"
           - name: slim
             file: Dockerfile.slim
             suffix: "-slim"
+            short_tag: "slim"
           - name: alpine
             file: Dockerfile.alpine
             suffix: "-alpine"
+            short_tag: "alpine"
     permissions:
       contents: read
       packages: write
@@ -87,10 +90,13 @@ jobs:
         variant:
           - name: default
             suffix: ""
+            short_tag: "latest"
           - name: slim
             suffix: "-slim"
+            short_tag: "slim"
           - name: alpine
             suffix: "-alpine"
+            short_tag: "alpine"
     permissions:
       contents: read
       packages: write
@@ -138,6 +144,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest${{ matrix.variant.suffix }},enable={{is_default_branch}}
+            type=raw,value=${{ matrix.variant.short_tag }},enable={{is_default_branch}}
             type=raw,value=${{ steps.version.outputs.version }}${{ matrix.variant.suffix }},enable=${{ steps.version.outputs.is_new_version }}
             type=raw,value=${{ steps.version.outputs.major_minor }}${{ matrix.variant.suffix }},enable=${{ steps.version.outputs.is_new_version }}
             type=sha,suffix=${{ matrix.variant.suffix }}
