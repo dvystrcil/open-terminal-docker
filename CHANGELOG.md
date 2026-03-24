@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.29] - 2026-03-24
+
+### Fixed
+
+- 🔒 **File save fails in multi-user mode** — `_chown()` transferred file ownership to the provisioned user but didn't set group-write permission, leaving files at `644`. The server process (a group member) could create new files but couldn't overwrite them on subsequent saves, returning `PermissionError`. Now sets `chmod g+w` after `chown`, matching the `2770` treatment already applied to directories. ([#93](https://github.com/open-webui/open-terminal/issues/93))
+
 ## [0.11.28] - 2026-03-24
 
 ### Added
