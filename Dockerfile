@@ -10,13 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget net-tools iputils-ping dnsutils netcat-openbsd socat telnet \
     openssh-client rsync \
     # Editors
-    vim nano \
+    vim \
     # Version control
     git \
     # Build tools
     build-essential cmake make \
-    # Scripting & languages
-    perl ruby-full lua5.4 \
     # Data processing
     jq xmlstarlet sqlite3 \
     # Media & documents
@@ -29,6 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates gnupg apt-transport-https \
     # Capabilities (needed for setcap on Python binary)
     libcap2-bin \
+    # Kubernetes
+    kubectl \
     && rm -rf /var/lib/apt/lists/*
 
 # Node.js (LTS)
