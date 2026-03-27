@@ -4,7 +4,7 @@ version = "0.11.31-dv"
 description = "A remote terminal API."
 readme = "README.md"
 authors = [
-    { name = "Timothy Jaeryang Baek", email = "tim@openwebui.com" }
+    { { name = "Timothy Jaeryang Baek", email = "tim@openwebui.com" }, { name = "Daniel Vystrcil", email = "dvystrcil@gmail.com" } }
 ]
 requires-python = ">=3.11"
 dependencies = [
