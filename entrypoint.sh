@@ -42,6 +42,9 @@ fi
 if [ ! -f "$HOME/.profile" ]; then
     cp /etc/skel/.profile "$HOME/.profile" 2>/dev/null || true
 fi
+if [ ! -f "$HOME/.kube/config" ]; then
+    cp -r /etc/skel/.kube "$HOME/.kube" 2>/dev/null || true
+fi
 mkdir -p "$HOME/.local/bin"
 
 # Docker socket access — add user to the socket's group if mounted
@@ -105,7 +108,7 @@ if [ "${OPEN_TERMINAL_ALLOWED_DOMAINS+set}" = "set" ]; then
 
         # Capture the current upstream nameserver before we override resolv.conf
         UPSTREAM_DNS=$(grep -m1 '^nameserver' /etc/resolv.conf | awk '{print $2}')
-        UPSTREAM_DNS="${UPSTREAM_DNS:-8.8.8.8}"
+        UPSTREAM_DNS="${UPSTREAM_DNS:-1.1.1.1}"
 
         # Create ipset for dynamically resolved IPs
         sudo ipset create allowed hash:ip -exist
