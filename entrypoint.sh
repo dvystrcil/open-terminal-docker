@@ -34,10 +34,48 @@ if [ "$OWNER" != "user" ]; then
     sudo chown -R user:user /home/user 2>/dev/null || true
 fi
 
+# add helper functions to the user's shell environment for PR verification and git auth setup
+cp -r /app/helpers/. "$HOME/" 2>/dev/null || true
+
 # Seed essential dotfiles when /home/user is bind-mounted empty
 # (Docker does not populate bind-mounts with image contents)
 if [ ! -f "$HOME/.bashrc" ]; then
     cp /etc/skel/.bashrc "$HOME/.bashrc" 2>/dev/null || true
+    # Append runtime environment settings to .bashrc
+    cat >> "$HOME/.bashrc" << EOF
+
+    # Disable git pager for consistent output
+    export GIT_PAGER=cat
+    export GIT_CONFIG_GLOBAL=/dev/null
+
+    # Set GitHub token for gh CLI
+    export GH_TOKEN="${GH_TOKEN}"
+
+    # Ensure full output from commands
+    export LESS=-RXF
+
+    # Helper function to verify PR creation
+    verify_pr() {
+        local branch=$1
+        echo "Checking PR for branch: $branch"
+        gh pr list --state open --search "branch:$branch" 2>/dev/null || echo "No open PRs found"
+    }
+
+    # Helper function to verify push
+    verify_push() {
+        local branch=$1
+        echo "Verifying push status..."
+        git ls-remote --heads origin "$branch" 2>&1 | grep "$branch" && echo "✓ Branch pushed successfully" || echo "✗ Branch not found on remote"
+    }
+
+    # Helper function to set up authenticated git remote (if not already done)
+    setup_git_auth() {
+        local token=$1
+        local repo_url="https://github.com/dvystrcil/open-webui.git"
+        local new_url="https://x-access-token:${token}@github.com/dvystrcil/open-webui.git"
+        git remote set-url origin "$new_url" 2>/dev/null && echo "✓ Remote URL updated with auth" || echo "Note: Remote may already be configured"
+    }
+EOF
 fi
 if [ ! -f "$HOME/.profile" ]; then
     cp /etc/skel/.profile "$HOME/.profile" 2>/dev/null || true

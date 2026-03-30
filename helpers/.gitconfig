@@ -1,0 +1,4 @@
+ [core]
+    pager = cat
+[init]
+    defaultBranch = main
