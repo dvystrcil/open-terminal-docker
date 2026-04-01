@@ -1,55 +1,43 @@
-# Pin to a specific patch version for reproducible builds.
-# To pick up security patches, bump this version and rebuild.
-FROM python:3.12.13
+# Wrapper image — extends ghcr.io/open-webui/open-terminal with
+# additional tools and environment configuration.
+FROM ghcr.io/open-webui/open-terminal:latest
 
+USER root
+
+# kubectl — official Kubernetes apt repository
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Core utilities
-    coreutils findutils grep sed gawk diffutils patch \
-    less file tree bc man-db \
-    # Networking
-    curl wget net-tools iputils-ping dnsutils netcat-openbsd socat telnet \
-    openssh-client rsync \
-    # Editors
-    vim \
-    # Version control
-    git \
-    # Build tools
-    build-essential cmake make \
-    # Data processing
-    jq xmlstarlet sqlite3 \
-    # Media & documents
-    ffmpeg pandoc imagemagick texlive-latex-base \
-    # Compression
-    zip unzip tar gzip bzip2 xz-utils zstd p7zip-full \
-    # System
-    procps htop lsof strace sysstat \
-    sudo tmux screen tini iptables ipset dnsmasq \
-    ca-certificates gnupg apt-transport-https \
-    # Capabilities (needed for setcap on Python binary)
-    libcap2-bin \
-    # Kubernetes
-    kubectl \
+        ca-certificates \
+        apt-transport-https \
+        gnupg \
+    && KUBE_VER=v1.32 \
+    && curl -fsSL "https://pkgs.k8s.io/core:/stable:/${KUBE_VER}/deb/Release.key" \
+        | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/${KUBE_VER}/deb/ /" \
+        | tee /etc/apt/sources.list.d/kubernetes.list \
+    && apt-get update && apt-get install -y --no-install-recommends kubectl \
     && rm -rf /var/lib/apt/lists/*
 
-# Node.js (LTS)
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+# ACT — run GitHub Actions workflows locally
+RUN curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/nektos/act/master/install.sh | bash
 
-# insgall ACT so we can test github workflows
-RUN curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash
-
-# Docker CLI + Compose + Buildx (mount socket at runtime for access)
-RUN curl -fsSL https://get.docker.com | sh
-
-# GH CLI
-RUN curl -fsSLo /usr/share/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    && printf 'Types: deb\nURIs: https://cli.github.com/packages\nSuites: stable\nComponents: main\nArchitectures: %s\nSigned-By: /usr/share/keyrings/githubcli-archive-keyring.gpg\n' "$(dpkg --print-architecture)" \
+# GitHub CLI
+RUN curl -fsSLo /usr/share/keyrings/githubcli-archive-keyring.gpg \
+        https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    && printf 'Types: deb\nURIs: https://cli.github.com/packages\nSuites: stable\nComponents: main\nArchitectures: %s\nSigned-By: /usr/share/keyrings/githubcli-archive-keyring.gpg\n' \
+        "$(dpkg --print-architecture)" \
         | tee /etc/apt/sources.list.d/github-cli.sources > /dev/null \
-    && apt-get update && apt-get install -y --no-install-recommends gh
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
 
-# Uncomment to apply security patches beyond what the base image provides.
-# Not recommended for reproducible builds; prefer bumping the base image tag.
+# ArgoCD CLI
+RUN ARCH=$(dpkg --print-architecture) \
+    && VERSION=$(curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/stable/VERSION) \
+    && curl -fsSL -o /tmp/argocd \
+        "https://github.com/argoproj/argo-cd/releases/download/v${VERSION}/argocd-linux-${ARCH}" \
+    && install -m 555 /tmp/argocd /usr/local/bin/argocd \
+    && rm /tmp/argocd
+
+# Apply security patches on top of the upstream base image
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 # Pre-configure kubectl for in-cluster serviceaccount
@@ -74,38 +62,12 @@ users:
     tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
 EOF
 
-WORKDIR /app
-
-RUN pip install --no-cache-dir \
-    numpy pandas scipy scikit-learn \
-    matplotlib seaborn plotly \
-    jupyter ipython \
-    requests beautifulsoup4 lxml \
-    sqlalchemy psycopg2-binary \
-    pyyaml toml jsonlines \
-    tqdm rich \
-    openpyxl weasyprint \
-    python-docx python-pptx pypdf csvkit
-
-COPY . .
-# Create a capability-bearing Python copy for the server process only.
-# The system python3 stays clean so user-spawned Python processes remain
-# dumpable (readable via /proc/[pid]/fd/ for port detection).
-RUN pip install --no-cache-dir . \
-    && cp "$(readlink -f "$(which python3)")" /usr/local/bin/python3-ot \
-    && setcap cap_setgid+ep /usr/local/bin/python3-ot \
-    && sed -i "1s|.*|#!/usr/local/bin/python3-ot|" "$(which open-terminal)"
-
-RUN useradd -m -s /bin/bash user && echo 'user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+# Custom entrypoint and helper scripts
+COPY entrypoint.sh /app/entrypoint.sh
+COPY helpers/ /app/helpers/
+RUN chmod +x /app/entrypoint.sh
 
 USER user
-ENV SHELL=/bin/bash
-ENV PATH="/home/user/.local/bin:${PATH}"
-WORKDIR /home/user
-
-EXPOSE 8000
-
-COPY entrypoint.sh /app/entrypoint.sh
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/app/entrypoint.sh"]
 CMD ["run"]

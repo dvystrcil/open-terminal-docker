@@ -71,8 +71,10 @@ if [ ! -f "$HOME/.bashrc" ]; then
     # Helper function to set up authenticated git remote (if not already done)
     setup_git_auth() {
         local token=$1
-        local repo_url="https://github.com/dvystrcil/open-webui.git"
-        local new_url="https://x-access-token:${token}@github.com/dvystrcil/open-webui.git"
+        local current_url
+        current_url=$(git remote get-url origin 2>/dev/null) || { echo "No git remote 'origin' found"; return 1; }
+        local new_url
+        new_url=$(echo "$current_url" | sed "s|https://|https://x-access-token:${token}@|")
         git remote set-url origin "$new_url" 2>/dev/null && echo "✓ Remote URL updated with auth" || echo "Note: Remote may already be configured"
     }
 EOF
@@ -113,6 +115,16 @@ if [ -n "${OPEN_TERMINAL_PIP_PACKAGES:-}" ]; then
         sudo pip install --no-cache-dir $OPEN_TERMINAL_PIP_PACKAGES
     else
         pip install --no-cache-dir $OPEN_TERMINAL_PIP_PACKAGES
+    fi
+fi
+
+# Auto-install npm packages
+if [ -n "${OPEN_TERMINAL_NPM_PACKAGES:-}" ]; then
+    echo "Installing npm packages: $OPEN_TERMINAL_NPM_PACKAGES"
+    if [ "${OPEN_TERMINAL_MULTI_USER:-false}" = "true" ]; then
+        sudo npm install -g $OPEN_TERMINAL_NPM_PACKAGES
+    else
+        npm install -g $OPEN_TERMINAL_NPM_PACKAGES
     fi
 fi
 
