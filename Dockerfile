@@ -52,6 +52,27 @@ RUN curl -fsSLo /usr/share/keyrings/githubcli-archive-keyring.gpg https://cli.gi
 # Not recommended for reproducible builds; prefer bumping the base image tag.
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
+# Pre-configure kubectl for in-cluster serviceaccount
+RUN mkdir -p /etc/skel/.kube && \
+    cat > /etc/skel/.kube/config << 'EOF'
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://kubernetes.default.svc
+    certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+  name: in-cluster
+contexts:
+- context:
+    cluster: in-cluster
+    user: open-terminal
+  name: default
+current-context: default
+users:
+- name: open-terminal
+  user:
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+EOF
 
 WORKDIR /app
 
