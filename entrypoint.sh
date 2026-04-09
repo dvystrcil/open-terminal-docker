@@ -148,6 +148,14 @@ fi
 if [ "${OPEN_TERMINAL_ALLOWED_DOMAINS+set}" = "set" ]; then
     if ! command -v iptables &>/dev/null; then
         echo "WARNING: iptables not found — skipping egress firewall"
+
+        # ── Bible bridge ──────────────────────────────────────────────
+        if [ -f /app/helpers/bible_bridge.py ]; then
+            echo "Starting bible bridge on port ${BRIDGE_PORT:-8765}..."
+            python3 /app/helpers/bible_bridge.py >> /tmp/bible_bridge.log 2>&1 &
+            echo "Bible bridge PID: $!"
+        fi
+
         exec open-terminal "$@"
     fi
 
@@ -212,7 +220,24 @@ if [ "${OPEN_TERMINAL_ALLOWED_DOMAINS+set}" = "set" ]; then
     fi
 
     echo "Egress firewall active — dropping CAP_NET_ADMIN permanently"
+
+    # ── Bible bridge (must start before CAP_NET_ADMIN is dropped) ────────────
+    # The bridge binds to a port, which requires capabilities available now.
+    # After capsh drops CAP_NET_ADMIN the bridge process keeps its bound socket.
+    if [ -f /app/helpers/bible_bridge.py ]; then
+        echo "Starting bible bridge on port ${BRIDGE_PORT:-8765}..."
+        python3 /app/helpers/bible_bridge.py >> /tmp/bible_bridge.log 2>&1 &
+        echo "Bible bridge PID: $!"
+    fi
+
     exec capsh --drop=cap_net_admin -- -c "exec open-terminal $*"
+fi
+
+# ── Bible bridge ──────────────────────────────────────────────────────────────
+if [ -f /app/helpers/bible_bridge.py ]; then
+    echo "Starting bible bridge on port ${BRIDGE_PORT:-8765}..."
+    python3 /app/helpers/bible_bridge.py >> /tmp/bible_bridge.log 2>&1 &
+    echo "Bible bridge PID: $!"
 fi
 
 exec open-terminal "$@"
