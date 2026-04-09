@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+
 # -----------------------------------------------------------------------
 # Docker-secrets support: resolve <VAR>_FILE → <VAR>
 # Follows the convention used by the official PostgreSQL image.
