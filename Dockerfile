@@ -48,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ansible \
         gnupg2 \
         terraform \
+        pandoc \
     && rm -rf /var/lib/apt/lists/*
 
 
