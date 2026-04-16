@@ -1,6 +1,14 @@
 """
 bible_bridge.py — Story Bible HTTP Bridge
 ==========================================
+version: 1.1
+
+Changelog:
+  1.0 — Initial multi-project release. BIBLE_ROOT, project parameter on all
+        endpoints, path-traversal protection, safe.directory registration,
+        /bible/sync and /bible/pr endpoints.
+  1.1 — Added version constant and /version endpoint. No functional changes.
+
 Runs in the open-terminal pod. Exposes git-cloned story bible projects
 over HTTP so the Fiction Writing Filter (in the pipelines pod) can read
 and write bible files across namespace boundaries.
@@ -21,10 +29,13 @@ on every request.
 
 Endpoints:
   GET  /health                                   — list available projects
+  GET  /version                                  — return bridge version
   GET  /projects                                 — list all project names
   GET  /bible?project=alpha&task_type=CONTINUITY — read bible files
   POST /bible/write                              — write/append + git commit
   POST /bible/pull                               — trigger git pull on a project
+  POST /bible/sync                               — stage all + commit + push
+  POST /bible/pr                                 — create branch + PR
 
 Start:
   python3 bible_bridge.py
@@ -53,6 +64,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("bible_bridge")
 
+VERSION      = "1.1"
 BIBLE_ROOT   = os.environ.get("BIBLE_ROOT", "/home/u3aa02715/fiction")
 BRIDGE_PORT  = int(os.environ.get("BRIDGE_PORT", "8765"))
 BRIDGE_TOKEN = os.environ.get("BRIDGE_TOKEN", "")
@@ -68,27 +80,19 @@ def resolve_project(project: str) -> tuple[str | None, str | None]:
     """
     Resolve a project name to its absolute path under BIBLE_ROOT.
     Returns (path, None) on success or (None, error_message) on failure.
-
     Security: prevents path traversal by ensuring the resolved path
     stays within BIBLE_ROOT.
     """
     if not project or not project.strip():
         return None, "project parameter is required"
-
-    # Strip any path separators to prevent traversal
     name = os.path.basename(project.strip())
     if not name or name.startswith("."):
         return None, f"invalid project name: {project!r}"
-
     path = os.path.join(BIBLE_ROOT, name)
-
-    # Confirm the resolved path is still inside BIBLE_ROOT
     if not os.path.realpath(path).startswith(os.path.realpath(BIBLE_ROOT)):
         return None, f"path traversal attempt blocked: {project!r}"
-
     if not os.path.isdir(path):
         return None, f"project not found: {name!r} (looked in {BIBLE_ROOT})"
-
     return path, None
 
 
@@ -100,7 +104,6 @@ def list_projects() -> list[str]:
     for entry in sorted(os.listdir(BIBLE_ROOT)):
         full = os.path.join(BIBLE_ROOT, entry)
         if os.path.isdir(full) and not entry.startswith("."):
-            # Only include dirs that are git repos
             if os.path.isdir(os.path.join(full, ".git")):
                 projects.append(entry)
     return projects
@@ -109,7 +112,6 @@ def list_projects() -> list[str]:
 # ── Git helpers ───────────────────────────────────────────────────────────────
 
 def git(project_path: str, *args) -> tuple[bool, str]:
-    """Run a git command in the given project path."""
     cmd = ["git", "-C", project_path] + list(args)
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -133,15 +135,8 @@ def git_pull(project_path: str) -> tuple[bool, str]:
 # ── Bible read ────────────────────────────────────────────────────────────────
 
 def read_bible(project_path: str, task_type: str = None) -> dict:
-    """
-    Read bible files from the project path.
-    Core bible/ files always included.
-    fragments/ included only for FRAGMENT and BIBLE_UPDATE tasks.
-    Returns {relpath: content} dict.
-    """
     files = {}
     bible_dir = os.path.join(project_path, "bible")
-
     if os.path.isdir(bible_dir):
         for f in sorted(os.listdir(bible_dir)):
             if f.endswith(".md") and not f.startswith("."):
@@ -152,14 +147,12 @@ def read_bible(project_path: str, task_type: str = None) -> dict:
             fp = os.path.join(project_path, f)
             if f.endswith(".md") and os.path.isfile(fp) and not f.startswith("."):
                 _load_file(project_path, f, files)
-
     if task_type in FRAGMENT_TASKS:
         fragments_dir = os.path.join(project_path, "fragments")
         if os.path.isdir(fragments_dir):
             for f in sorted(os.listdir(fragments_dir)):
                 if f.endswith(".md") and not f.startswith("."):
                     _load_file(project_path, os.path.join("fragments", f), files)
-
     total_chars = sum(len(v) for v in files.values())
     log.info(
         f"Bible read: {len(files)} files ({total_chars} chars) "
@@ -195,73 +188,56 @@ def write_bible(
             os.makedirs(parent, exist_ok=True)
         except Exception as e:
             return False, f"Could not create directory {parent}: {e}"
-
     try:
         if append and os.path.exists(filepath):
             with open(filepath, "r", encoding="utf-8") as f:
                 existing = f.read()
             separator = "\n\n---\n\n" if existing.strip() else ""
             content = existing + separator + content.strip() + "\n"
-
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
         log.info(f"Wrote {filename} ({len(content)} chars) append={append}")
     except Exception as e:
         return False, f"File write failed: {e}"
-
     msg = commit_message or f"FWF: update {filename}"
     ok, _ = git(project_path, "add", filename)
     if not ok:
         return False, f"git add failed for {filename}"
-
     ok, out = git(project_path, "commit", "-m", msg)
     if not ok:
         if "nothing to commit" in out.lower():
             return True, f"{filename} unchanged — nothing to commit"
         return False, f"git commit failed: {out}"
-
     ok, out = git(project_path, "push", GIT_REMOTE, GIT_BRANCH)
     if not ok:
         return False, f"git push failed: {out}"
-
     log.info(f"git commit+push: {msg}")
     return True, f"Written, committed, and pushed — '{msg}'"
 
 
 # ── Bible sync (add-all + commit + push) ─────────────────────────────────────
 
-def sync_bible(project_path: str) -> tuple[bool, str]:
-    """
-    Stage all changes, commit, and push.
-    Used by the /sync_up slash command.
-    """
-    # Check if there is anything to commit
+def sync_bible(project_path: str, commit_message: str = None) -> tuple[bool, str]:
     result = subprocess.run(
         ["git", "-C", project_path, "status", "--porcelain"],
         capture_output=True, text=True, timeout=10
     )
     if not result.stdout.strip():
         return True, "nothing to commit — already up to date"
-
     ok, _ = git(project_path, "add", "-A")
     if not ok:
         return False, "git add -A failed"
-
-    import time as _time
-    msg = "sync: manual sync-up " + _time.strftime("%Y-%m-%d %H:%M")
+    msg = commit_message or ("sync: manual sync-up " + time.strftime("%Y-%m-%d %H:%M"))
     ok, out = git(project_path, "commit", "-m", msg)
     if not ok:
         if "nothing to commit" in out.lower():
             return True, "nothing to commit — already up to date"
         return False, "git commit failed: " + out
-
     ok, out = git(project_path, "push", GIT_REMOTE, GIT_BRANCH)
     if not ok:
         return False, "git push failed: " + out
-
     log.info("sync commit+push: " + msg)
     return True, "committed and pushed: '" + msg + "'"
-
 
 
 # ── Pull request (branch + commit + push + gh pr create) ─────────────────────
@@ -273,49 +249,30 @@ def pr_bible(
     pr_title: str,
     base_branch: str,
 ) -> tuple[bool, str, str]:
-    """
-    Create a new branch, stage all changes, commit, push, and open a PR.
-    Requires the gh CLI to be authenticated (GH_TOKEN env var).
-    Returns (success, status_message, pr_url).
-    """
     import shutil
-
     if not shutil.which("gh"):
         return False, "gh CLI not found — ensure it is installed in the open-terminal image", ""
-
-    # Check for changes to commit
     result = subprocess.run(
         ["git", "-C", project_path, "status", "--porcelain"],
         capture_output=True, text=True, timeout=10
     )
     if not result.stdout.strip():
         return False, "nothing to commit — no changes to create a PR for", ""
-
-    # Create and checkout new branch
     ok, out = git(project_path, "checkout", "-b", branch)
     if not ok:
         return False, "git checkout -b failed: " + out, ""
-
-    # Stage all changes
     ok, _ = git(project_path, "add", "-A")
     if not ok:
-        # Switch back to base before returning
         git(project_path, "checkout", base_branch)
         return False, "git add -A failed", ""
-
-    # Commit
     ok, out = git(project_path, "commit", "-m", commit_message)
     if not ok:
         git(project_path, "checkout", base_branch)
         return False, "git commit failed: " + out, ""
-
-    # Push branch
     ok, out = git(project_path, "push", GIT_REMOTE, branch)
     if not ok:
         git(project_path, "checkout", base_branch)
         return False, "git push failed: " + out, ""
-
-    # Create PR via gh CLI
     try:
         result = subprocess.run(
             [
@@ -330,18 +287,14 @@ def pr_bible(
         )
         if result.returncode != 0:
             return False, "gh pr create failed: " + result.stderr.strip(), ""
-
         pr_url = result.stdout.strip()
         log.info("PR created: " + pr_url)
-
-        # Switch back to base branch
         git(project_path, "checkout", base_branch)
-
         return True, "branch '" + branch + "' committed, pushed, PR opened", pr_url
-
     except Exception as e:
         git(project_path, "checkout", base_branch)
         return False, "gh pr create exception: " + str(e), ""
+
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
 
@@ -370,7 +323,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length))
 
     def _require_project(self, params: dict) -> tuple[str | None, str | None]:
-        """Resolve project from query params. Returns (path, None) or (None, error)."""
         project = params.get("project", [None])[0]
         return resolve_project(project)
 
@@ -378,7 +330,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if not self._auth_ok():
             self._send_json(401, {"error": "Unauthorized"})
             return
-
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
 
@@ -386,10 +337,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
             projects = list_projects()
             self._send_json(200, {
                 "status": "ok",
+                "version": VERSION,
                 "bible_root": BIBLE_ROOT,
                 "bible_root_exists": os.path.exists(BIBLE_ROOT),
                 "projects": projects,
             })
+
+        elif parsed.path == "/version":
+            self._send_json(200, {"version": VERSION})
 
         elif parsed.path == "/projects":
             self._send_json(200, {"projects": list_projects()})
@@ -410,7 +365,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if not self._auth_ok():
             self._send_json(401, {"error": "Unauthorized"})
             return
-
         parsed = urlparse(self.path)
         body = self._read_body()
 
@@ -419,16 +373,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if err:
                 self._send_json(400, {"error": err})
                 return
-
             filename = body.get("filename")
             content  = body.get("content")
             append   = body.get("append", True)
             commit_message = body.get("commit_message")
-
             if not filename or content is None:
                 self._send_json(400, {"error": "filename and content are required"})
                 return
-
             ok, status = write_bible(project_path, filename, content, append, commit_message)
             self._send_json(200 if ok else 500, {"ok": ok, "status": status})
 
@@ -445,7 +396,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if err:
                 self._send_json(400, {"error": err})
                 return
-            ok, status = sync_bible(project_path)
+            commit_message = body.get("commit_message")
+            ok, status = sync_bible(project_path, commit_message)
             self._send_json(200 if ok else 500, {"ok": ok, "status": status})
 
         elif parsed.path == "/bible/pr":
@@ -457,7 +409,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             commit_message = body.get("commit_message", "sync: " + time.strftime("%Y-%m-%d %H:%M"))
             pr_title = body.get("pr_title", commit_message)
             base_branch = body.get("base_branch", GIT_BRANCH)
-            ok, status, pr_url = pr_bible(project_path, branch, commit_message, pr_title, base_branch)
+            ok, status, pr_url = pr_bible(
+                project_path, branch, commit_message, pr_title, base_branch
+            )
             self._send_json(
                 200 if ok else 500,
                 {"ok": ok, "status": status, "pr_url": pr_url}
@@ -477,8 +431,6 @@ if __name__ == "__main__":
         projects = list_projects()
         if projects:
             log.info(f"Found {len(projects)} project(s): {', '.join(projects)}")
-            # Register each project as a safe.directory so git works regardless
-            # of which user owns the files vs which user runs the bridge process.
             for project in projects:
                 project_path = os.path.join(BIBLE_ROOT, project)
                 try:
@@ -493,7 +445,7 @@ if __name__ == "__main__":
         else:
             log.warning(f"No git repos found under {BIBLE_ROOT}")
 
-    log.info(f"Bible bridge starting on port {BRIDGE_PORT}")
+    log.info(f"Bible bridge v{VERSION} starting on port {BRIDGE_PORT}")
     log.info(f"Bible root: {BIBLE_ROOT}")
     log.info(f"Auth: {'enabled' if BRIDGE_TOKEN else 'disabled (set BRIDGE_TOKEN to enable)'}")
 

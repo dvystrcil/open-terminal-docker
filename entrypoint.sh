@@ -1,9 +1,6 @@
 #!/bin/bash
 set -e
 
-export GIT_CONFIG_GLOBAL=/dev/null
-export GIT_CONFIG_NOSYSTEM=1
-
 # -----------------------------------------------------------------------
 # Docker-secrets support: resolve <VAR>_FILE → <VAR>
 # Follows the convention used by the official PostgreSQL image.
@@ -155,7 +152,7 @@ if [ "${OPEN_TERMINAL_ALLOWED_DOMAINS+set}" = "set" ]; then
         # ── Bible bridge ──────────────────────────────────────────────
         if [ -f /app/helpers/bible_bridge.py ]; then
             echo "Starting bible bridge on port ${BRIDGE_PORT:-8765}..."
-            python3 /app/helpers/bible_bridge.py >> /tmp/bible_bridge.log 2>&1 &
+        (python3 /app/helpers/bible_bridge.py >> /tmp/bible_bridge.log 2>&1) &
             echo "Bible bridge PID: $!"
         fi
 
@@ -229,7 +226,7 @@ if [ "${OPEN_TERMINAL_ALLOWED_DOMAINS+set}" = "set" ]; then
     # After capsh drops CAP_NET_ADMIN the bridge process keeps its bound socket.
     if [ -f /app/helpers/bible_bridge.py ]; then
         echo "Starting bible bridge on port ${BRIDGE_PORT:-8765}..."
-        python3 /app/helpers/bible_bridge.py >> /tmp/bible_bridge.log 2>&1 &
+    (python3 /app/helpers/bible_bridge.py >> /tmp/bible_bridge.log 2>&1) &
         echo "Bible bridge PID: $!"
     fi
 
@@ -239,7 +236,7 @@ fi
 # ── Bible bridge ──────────────────────────────────────────────────────────────
 if [ -f /app/helpers/bible_bridge.py ]; then
     echo "Starting bible bridge on port ${BRIDGE_PORT:-8765}..."
-    python3 /app/helpers/bible_bridge.py >> /tmp/bible_bridge.log 2>&1 &
+(python3 /app/helpers/bible_bridge.py >> /tmp/bible_bridge.log 2>&1) &
     echo "Bible bridge PID: $!"
 fi
 
