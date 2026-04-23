@@ -2,3 +2,14 @@ githubConfigUrl: "https://github.com/dvystrcil/open-terminal-docker"
 runnerScaleSetName: "open-terminal-docker-runner"
 minRunners: 0
 maxRunners: 3
+podTemplate:
+  spec:
+    volumes:
+      - name: docker-cache
+        persistentVolumeClaim:
+          claimName: open-terminal-docker-arc-runner-cache
+    containers:
+      - name: dind
+        volumeMounts:
+          - name: docker-cache
+            mountPath: /mnt/docker-cache
