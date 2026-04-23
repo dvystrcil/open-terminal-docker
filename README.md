@@ -1,201 +1,119 @@
-# ⚡ Open Terminal
+# open-terminal-docker
 
-A lightweight, self-hosted terminal that gives AI agents and automation tools a dedicated environment to run commands, manage files, and execute code — all through a simple API.
+A downstream wrapper image around [`ghcr.io/open-webui/open-terminal`](https://github.com/open-webui/open-terminal) that turns the upstream "remote terminal API" into a batteries-included **DevOps / SRE / writing workbench** for AI agents.
 
-## Why Open Terminal?
+The upstream image gives an agent a sandboxed shell with a REST API. This image keeps everything upstream provides and layers on the tools, configuration, and side-services we actually use day to day — so a fresh container is immediately useful for managing Kubernetes clusters, opening GitHub PRs, running infrastructure-as-code, and acting as a writable backend for the fiction-writing pipeline.
 
-AI assistants are great at writing code, but they need somewhere to *run* it. Open Terminal is that place — a remote shell with file management, search, and more, accessible over a simple REST API.
+## What this image adds on top of upstream
 
-You can run it two ways:
+### Pre-installed tooling
 
-- **Docker (sandboxed)** — runs in an isolated container with a full toolkit pre-installed: Python, Node.js, git, build tools, data science libraries, ffmpeg, and more. Great for giving AI agents a safe playground without touching your host system.
-- **Bare metal** — install it with `pip` and run it anywhere Python runs. Commands run directly on your machine with access to your real files, your real tools, and your real environment, perfect for local development, personal automation, or giving an AI assistant full access to your actual projects.
+Baked into the image (single consolidated apt layer plus a few binary installs):
 
-## Getting Started
+- **Kubernetes**: `kubectl` (v1.34 channel), `helm`, `argocd`
+- **GitHub / git**: `gh` CLI, plus the upstream `git`
+- **Infrastructure**: `terraform`, `ansible`, `act` (run GitHub Actions locally)
+- **Data / files**: `yq`, `jq`, `pandoc`, `sqlite3`, `redis-tools`, `postgresql-client`
+- **Productivity**: `ripgrep`, `fd-find`, `bat`, `tmux`, `tree`, `htop`, `httpie`
+- **Archives / transfer**: `pigz`, `unar`, `rsync`, `zip`, `unzip`, `diffutils`
+- **Crypto**: `gnupg2`
 
-### Docker (recommended)
+A final `apt-get upgrade` is run on top of the upstream base so security patches travel with each rebuild.
 
-```bash
-docker run -d --name open-terminal --restart unless-stopped -p 8000:8000 -v open-terminal:/home/user -e OPEN_TERMINAL_API_KEY=your-secret-key ghcr.io/open-webui/open-terminal
-```
+### Pre-wired in-cluster `kubectl`
 
-That's it — you're up and running at `http://localhost:8000`.
+`/etc/skel/.kube/config` ships a context (`in-cluster` / user `open-terminal`) that points at `kubernetes.default.svc` and reads the pod's serviceaccount token from `/var/run/secrets/kubernetes.io/serviceaccount/`. When the container runs in a Kubernetes pod with a serviceaccount mounted, `kubectl` works with no extra setup. New users provisioned by the upstream multi-user mode inherit this via skel.
 
-> [!TIP]
-> If you don't set an API key, one is generated automatically. Grab it with `docker logs open-terminal`.
+### Custom entrypoint
 
-#### Image Variants
+[entrypoint.sh](entrypoint.sh) extends upstream behaviour with:
 
-| | `latest` | `slim` | `alpine` |
-|---|---|---|---|
-| **Best for** | AI agent sandboxes | Production / hardened | Edge / CI / minimal footprint |
-| **Size** | ~4 GB | ~430 MB | ~230 MB |
-| **Bundled tooling** | Node.js, gcc, ffmpeg, LaTeX, Docker CLI, data science libs | git, curl, jq | git, curl, jq |
-| **Install packages at runtime** | ✔ (has `sudo`) | ✘ | ✘ |
-| **Multi-user mode** | ✔ | ✘ | ✘ |
-| **Egress firewall** | ✔ | ✔ | ✔ |
+- **Docker-secrets style env vars** — any `<VAR>_FILE` is resolved into `<VAR>` (matching the official PostgreSQL image convention). Currently applied to `OPEN_TERMINAL_API_KEY`, so you can mount the API key as a file instead of passing it on the command line.
+- **Home-directory ownership repair** — `chown`s `/home/user` back to `user` when a bind-mounted volume comes in owned by someone else.
+- **Dotfile seeding for empty bind mounts** — copies `/etc/skel/.bashrc`, `.profile`, and `.kube/` into a freshly mounted home so the shell is usable immediately. Docker doesn't populate bind-mounts from the image, this fills that gap.
+- **Shell helpers** appended to the seeded `.bashrc`:
+  - `GIT_PAGER=cat`, `GIT_CONFIG_GLOBAL=/dev/null`, `LESS=-RXF` for non-interactive friendly output
+  - `GH_TOKEN` exported into the shell so `gh` is authenticated out of the box
+  - `verify_pr <branch>` — list open PRs for a branch
+  - `verify_push <branch>` — confirm a branch reached the remote
+  - `setup_git_auth <token>` — rewrite the `origin` URL with an `x-access-token` credential
+- **Docker socket group fixup** — when `/var/run/docker.sock` is mounted, the entrypoint discovers the socket's GID, creates a matching group if needed, adds `user` to it, and re-execs through `sg` so the new group membership is live without a re-login.
+- **Runtime package install hooks** — preserves and respects the upstream `OPEN_TERMINAL_PACKAGES` (apt) and `OPEN_TERMINAL_PIP_PACKAGES` (pip), and adds `OPEN_TERMINAL_NPM_PACKAGES` (npm). Multi-user mode installs pip/npm globally via `sudo` so every provisioned user shares them.
+- **Network egress firewall** — passes through the upstream `OPEN_TERMINAL_ALLOWED_DOMAINS` mechanism (DNS whitelist via dnsmasq + iptables + `ipset`, then `CAP_NET_ADMIN` is dropped via `capsh`). Behaviour:
+  - unset → full egress
+  - empty string → block all outbound
+  - comma list → only those domains (and subdomains) resolve
+- **Bible bridge launch** — starts `helpers/bible_bridge.py` in the background on `${BRIDGE_PORT:-8765}` (see below). It is started **before** the egress firewall drops `CAP_NET_ADMIN` so it can bind its port.
 
-**`slim`** and **`alpine`** have the same feature set. Slim uses Debian (glibc) for broader binary compatibility; Alpine uses musl libc and is smaller, but some C-extension pip packages may need to compile from source.
+### Helpers shipped into `$HOME`
 
-```bash
-docker run -d -p 8000:8000 -e OPEN_TERMINAL_API_KEY=secret ghcr.io/open-webui/open-terminal:slim
-docker run -d -p 8000:8000 -e OPEN_TERMINAL_API_KEY=secret ghcr.io/open-webui/open-terminal:alpine
-```
+On startup, everything in `/app/helpers/` is copied into the user's home so it is reachable from interactive shells and from the agent.
 
-> [!NOTE]
-> Slim and Alpine don't support `OPEN_TERMINAL_PACKAGES` / `OPEN_TERMINAL_PIP_PACKAGES`. To add packages, extend [Dockerfile.slim](Dockerfile.slim) or [Dockerfile.alpine](Dockerfile.alpine).
+- [helpers/create-pr.sh](helpers/create-pr.sh) — opinionated five-step PR workflow (`branch → add → commit → push → gh pr create`) with colorized progress and an open-PR verification step at the end. Usage:
 
-#### Updating
+  ```bash
+  ~/create-pr.sh <branch> <commit-msg> <pr-title> <pr-body>
+  ```
 
-```bash
-docker pull ghcr.io/open-webui/open-terminal
-docker rm -f open-terminal
-```
+- [helpers/bible_bridge.py](helpers/bible_bridge.py) — small `http.server`-based HTTP bridge that exposes one or more git-cloned "story bible" projects under `BIBLE_ROOT` (default `/home/u3aa02715/fiction`). It exists so the **Fiction Writing Filter** running in a different (pipelines) pod can read and write bible files across namespace boundaries without sharing a volume. Endpoints:
 
-Then re-run the `docker run` command above.
+  | Method | Path | Purpose |
+  |---|---|---|
+  | `GET`  | `/health` | bridge status + list of detected project repos |
+  | `GET`  | `/version` | bridge version (currently `1.1`) |
+  | `GET`  | `/projects` | list project names under `BIBLE_ROOT` |
+  | `GET`  | `/bible?project=…&task_type=…` | read all `bible/*.md` (and `fragments/*.md` for `FRAGMENT` / `BIBLE_UPDATE` tasks) |
+  | `POST` | `/bible/write` | write/append a file, then `git add`/`commit`/`push` |
+  | `POST` | `/bible/pull` | `git pull --ff-only` on a project |
+  | `POST` | `/bible/sync` | `git add -A` + commit + push everything dirty |
+  | `POST` | `/bible/pr` | branch + commit + push + `gh pr create` |
 
-### Bare Metal
+  Path traversal into other directories is blocked via `realpath` containment under `BIBLE_ROOT`. Optional `BRIDGE_TOKEN` enables `Authorization: Bearer …` checks. Configurable with `BIBLE_ROOT`, `BRIDGE_PORT`, `BRIDGE_TOKEN`, `GIT_REMOTE`, `GIT_BRANCH`.
 
-No Docker? No problem. Open Terminal is a standard Python package:
+  The bridge is dormant if `BIBLE_ROOT` is empty — it just lists no projects — so the image is harmless to run for non-fiction workloads.
 
-```bash
-# One-liner with uvx (no install needed)
-uvx open-terminal run --host 0.0.0.0 --port 8000 --api-key your-secret-key
-
-# Or install globally with pip
-pip install open-terminal
-open-terminal run --host 0.0.0.0 --port 8000 --api-key your-secret-key
-```
-
-> [!CAUTION]
-> On bare metal, commands run directly on your machine with your user's permissions. Use Docker if you want sandboxed execution.
-
-#### Customizing the Docker Environment
-
-The easiest way to add extra packages is with environment variables — no fork needed:
-
-```bash
-docker run -d --name open-terminal -p 8000:8000 \
-  -e OPEN_TERMINAL_PACKAGES="cowsay figlet" \
-  -e OPEN_TERMINAL_PIP_PACKAGES="httpx polars" \
-  ghcr.io/open-webui/open-terminal
-```
-
-| Variable | Description |
-|---|---|
-| `OPEN_TERMINAL_PACKAGES` | Space-separated list of **apt** packages to install at startup |
-| `OPEN_TERMINAL_PIP_PACKAGES` | Space-separated list of **pip** packages to install at startup |
-
-> [!NOTE]
-> Packages are installed each time the container starts, so startup will take longer with large package lists. For heavy customization, build a custom image instead.
-
-#### Docker Access
-
-The image includes the Docker CLI, Compose, and Buildx. To let agents build images, run containers, etc., mount the host's Docker socket:
+## Build and run
 
 ```bash
-docker run -d --name open-terminal -p 8000:8000 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
+docker build -t open-terminal-docker .
+docker run -d --name open-terminal \
+  -p 8000:8000 \
   -v open-terminal:/home/user \
-  ghcr.io/open-webui/open-terminal
-```
-
-> [!CAUTION]
-> Mounting the Docker socket gives the container **full control over the host's Docker daemon**, which is effectively root access on the host machine. Anyone with access to the terminal can pull/run arbitrary containers (including `--privileged` ones), mount host directories, access host networking, and manage all containers on the host. Only do this in fully trusted environments.
-
-For full control, fork the repo, edit the [Dockerfile](Dockerfile), and build your own image:
-
-```bash
-docker build -t my-terminal .
-docker run -d --name open-terminal -p 8000:8000 my-terminal
-```
-
-
-## Configuration
-
-Open Terminal can be configured via a TOML config file, environment variables, and CLI flags. Settings are resolved in this order (highest priority wins):
-
-1. **CLI flags** (`--host`, `--port`, `--api-key`, etc.)
-2. **Environment variables** (`OPEN_TERMINAL_API_KEY`, etc.)
-3. **User config** — `$XDG_CONFIG_HOME/open-terminal/config.toml` (defaults to `~/.config/open-terminal/config.toml`)
-4. **System config** — `/etc/open-terminal/config.toml`
-5. **Built-in defaults**
-
-Create a config file at either location with any of these keys (all optional):
-
-```toml
-host = "0.0.0.0"
-port = 8000
-api_key = "sk-my-secret-key"
-cors_allowed_origins = "*"
-log_dir = "/var/log/open-terminal"
-binary_mime_prefixes = "image,audio"
-execute_timeout = 5  # seconds to wait for command output (unset by default)
-```
-
-> [!TIP]
-> Use the system config at `/etc/open-terminal/config.toml` to set site-wide defaults for host and port, and the user config for personal settings like the API key — this keeps the key out of `ps` / `htop`.
-
-You can also point to a specific config file:
-
-```bash
-open-terminal run --config /path/to/my-config.toml
-```
-
-## Using with Open WebUI
-
-Open Terminal integrates with [Open WebUI](https://github.com/open-webui/open-webui), giving your AI assistants the ability to run commands, manage files, and interact with a terminal right from the AI interface. Make sure to add it under **Open Terminal** in the integrations settings, not as a tool server. Adding it as an Open Terminal connection gives you a built-in file navigation sidebar where you can browse directories, upload, download, and edit files. There are two ways to connect:
-
-### Direct Connection
-
-Users can connect their own Open Terminal instance from their user settings. This is useful when the terminal is running on their local machine or a network only they can reach, since requests go directly from the **browser**.
-
-1. Go to **User Settings → Integrations → Open Terminal**
-2. Add the terminal **URL** and **API key**
-3. Enable the connection
-
-### System-Level Connection (Multi-User)
-
-Admins can configure Open Terminal connections for all their users from the admin panel. No additional services required. Multiple terminals can be set up with access controlled at the user or group level. Requests are proxied through the Open WebUI **backend**, so the terminal only needs to be reachable from the server.
-
-1. Go to **Admin Settings → Integrations → Open Terminal**
-2. Add the terminal **URL** and **API key**
-3. Enable the connection
-
-#### Built-in Multi-User Isolation
-
-> [!CAUTION]
-> Single-container multi-user mode is **not designed for production multi-user deployments**. All users share the same kernel, network, and system resources with no hard isolation boundaries between them. If one user's process misbehaves, it can affect every other user on the system. This mode exists as a lightweight convenience for small, trusted groups — not as a security model you should rely on.
-
-For small, trusted deployments you can enable per-user isolation inside a single container:
-
-```bash
-docker run -d --name open-terminal -p 8000:8000 \
-  -v open-terminal:/home \
-  -e OPEN_TERMINAL_MULTI_USER=true \
   -e OPEN_TERMINAL_API_KEY=your-secret-key \
-  ghcr.io/open-webui/open-terminal
+  open-terminal-docker
 ```
 
-Each user automatically gets a dedicated Linux account with its own home directory. Files, commands, and terminals are isolated between users via standard Unix permissions.
+The wrapper inherits the upstream `CMD ["run"]` and `ENTRYPOINT` chain (now `tini → entrypoint.sh → open-terminal`), so all upstream CLI flags and environment variables continue to work — see the [upstream README](https://github.com/open-webui/open-terminal) for the full configuration surface (config files, multi-user mode, MCP server, etc.).
 
-## API Docs
+### Useful environment variables introduced or exposed by this wrapper
 
-Full interactive API documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs) once your instance is running.
+| Variable | Effect |
+|---|---|
+| `OPEN_TERMINAL_API_KEY_FILE` | Read the API key from a file (Docker/Kubernetes secret friendly) |
+| `OPEN_TERMINAL_NPM_PACKAGES` | Space-separated npm packages to install at startup |
+| `GH_TOKEN` | Exported into the shell so `gh` is authenticated |
+| `BIBLE_ROOT` | Parent directory of bible-bridge git repos (default `/home/u3aa02715/fiction`) |
+| `BRIDGE_PORT` | Port the bible bridge listens on (default `8765`) |
+| `BRIDGE_TOKEN` | Optional bearer token for the bible bridge |
+| `GIT_REMOTE` / `GIT_BRANCH` | Defaults used by bible-bridge git operations (`origin` / `main`) |
 
-## Star History
+Plus everything upstream exposes: `OPEN_TERMINAL_PACKAGES`, `OPEN_TERMINAL_PIP_PACKAGES`, `OPEN_TERMINAL_MULTI_USER`, `OPEN_TERMINAL_ALLOWED_DOMAINS`, etc.
 
-<a href="https://star-history.com/#open-webui/open-terminal&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=open-webui/open-terminal&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=open-webui/open-terminal&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=open-webui/open-terminal&type=Date" />
-  </picture>
-</a>
+## Repository layout
 
-> [!TIP]
-> **Need container-per-user isolation?** Check out **[Terminals](https://github.com/open-webui/terminals)**, which provisions and manages separate Open Terminal containers per user. For lighter deployments, built-in multi-user mode (`OPEN_TERMINAL_MULTI_USER=true`) provides per-user isolation inside a single container.
+```
+Dockerfile           # FROM ghcr.io/open-webui/open-terminal:latest + tooling
+entrypoint.sh        # secrets resolution, dotfile seeding, helpers, egress, bridge
+helpers/
+  bible_bridge.py    # multi-project Story Bible HTTP bridge
+  create-pr.sh       # five-step PR workflow
+  CONTAINER_TEST_PLAN.md
+open_terminal/       # vendored copy of the upstream Python package (reference)
+dev.sh               # local dev: uv run uvicorn open_terminal.main:app --reload
+```
+
+> The `open_terminal/` source tree is checked in for reference and local debugging via [dev.sh](dev.sh). The published image runs the upstream `open-terminal` binary from the base image, **not** this local copy — to ship code changes you would need to either pin a custom upstream version or restructure the Dockerfile to install from this tree.
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).
