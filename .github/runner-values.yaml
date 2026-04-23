@@ -1,8 +1,4 @@
-githubConfigUrl: "https://github.com/dvystrcil/open-terminal-docker" 
-# controllerServiceAccount:
-#   namespace: arc-systems
-#   name: arc-systems-gha-rs-controller 
-# githubConfigSecret: arc-secret
+githubConfigUrl: "https://github.com/dvystrcil/open-terminal-docker"
 runnerScaleSetName: "open-terminal-docker-runner"
 minRunners: 0
 maxRunners: 3
