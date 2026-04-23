@@ -75,11 +75,11 @@ RUN ARCH=$(dpkg --print-architecture) \
     && rm -rf /tmp/*
 
 # Helm — official binary install
-RUN ARCH=$(dpkg --print-architecture) \
-    && VERSION=$(curl -fsSL https://api.github.com/repos/helm/helm/releases/latest | grep '"tag_name"' | cut -d'"' -f4) \
-    && curl -fsSL "https://get.helm.sh/helm-${VERSION}-linux-${ARCH}.tar.gz" | tar -xz \
-    && install -m 555 "linux-${ARCH}/helm" /usr/local/bin/helm \
-    && rm -rf "linux-${ARCH}" /tmp/*
+# RUN ARCH=$(dpkg --print-architecture) \
+#     && VERSION=$(curl -fsSL https://api.github.com/repos/helm/helm/releases/latest | grep '"tag_name"' | cut -d'"' -f4) \
+#     && curl -fsSL "https://get.helm.sh/helm-${VERSION}-linux-${ARCH}.tar.gz" | tar -xz \
+#     && install -m 555 "linux-${ARCH}/helm" /usr/local/bin/helm \
+#     && rm -rf "linux-${ARCH}" /tmp/*
 
 
 # Pre-configure kubectl for in-cluster serviceaccount
