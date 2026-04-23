@@ -1,0 +1,33 @@
+name: PR Agent
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  pr_agent:
+    if: ${{ github.event.sender.type != 'Bot' }}
+    runs-on: open-terminal-docker-runner
+    name: Run PR Agent on PRs and comments
+    steps:
+      - name: PR Agent action
+        uses: qodo-ai/pr-agent@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIG.MODEL: "ollama/qwen2.5-coder:7b"
+          CONFIG.MODEL_WEAK: "ollama/qwen2.5-coder:7b"
+          CONFIG.FALLBACK_MODELS: '["ollama/qwen2.5-coder:7b"]'
+          CONFIG.CUSTOM_MODEL_MAX_TOKENS: "32768"
+          CONFIG.DUPLICATE_PROMPT_EXAMPLES: "true"
+          OLLAMA.API_BASE: "http://ollama.ollama.svc.cluster.local"
+          PR_REVIEWER.REQUIRE_TESTS_REVIEW: "false"
+          GITHUB_ACTION_CONFIG.AUTO_REVIEW: "true"
+          GITHUB_ACTION_CONFIG.AUTO_DESCRIBE: "true"
+          GITHUB_ACTION_CONFIG.AUTO_IMPROVE: "true"
