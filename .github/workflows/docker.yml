@@ -7,8 +7,6 @@ on:
       - '.github/**'
       - '*.md'
   workflow_dispatch:
-  schedule:
-    - cron: '0 11 * * *'  # 3:00 AM Pacific (UTC-8)
 
 env:
   INTERNAL_REGISTRY: harbor-core.harbor.svc.cluster.local
@@ -72,7 +70,7 @@ jobs:
     runs-on: open-terminal-docker-runner
     needs: build
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Fetch secrets from Infisical
@@ -115,3 +113,27 @@ jobs:
       - name: Inspect image
         run: |
           docker buildx imagetools inspect ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:dev
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          LATEST_TAG=$(curl -sf -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${REPO}/releases/latest" \
+            | jq -r '.tag_name // "v0.0.0"')
+
+          VERSION=${LATEST_TAG#v}
+          MAJOR=$(echo $VERSION | cut -d. -f1)
+          MINOR=$(echo $VERSION | cut -d. -f2)
+          PATCH=$(echo $VERSION | cut -d. -f3)
+          NEW_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${REPO}/releases" \
+            -d "$(jq -n \
+              --arg tag "$NEW_TAG" \
+              --arg name "$NEW_TAG" \
+              '{tag_name: $tag, name: $name, generate_release_notes: true}')"

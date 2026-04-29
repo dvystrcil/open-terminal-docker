@@ -1,9 +1,9 @@
 name: Mirror Base Image
 on:
   schedule:
-    - cron: '0 1 * * *'   # daily at 1am  
+    - cron: '0 1 * * *'   # daily at 1am
   workflow_dispatch:
-  
+
 env:
   INTERNAL_REGISTRY: harbor-core.harbor.svc.cluster.local
   PROJECT: ghcr-proxy
@@ -12,6 +12,10 @@ env:
 jobs:
   mirror:
     runs-on: open-terminal-docker-runner
+    permissions:
+      contents: read
+      actions: write
+
     steps:
       - name: Fetch secrets from Infisical
         uses: Infisical/secrets-action@v1.0.7
@@ -23,21 +27,22 @@ jobs:
           secret-path: /
           export-type: env
           domain: http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080
-  
+
       - name: Log in to Harbor (internal)
         uses: docker/login-action@v3
         with:
           registry: ${{ env.INTERNAL_REGISTRY }}
           username: ${{ env.HB_USERNAME }}
           password: ${{ env.HB_PASSWORD }}
-          
+
       - name: Check and mirror base image
+        id: mirror
         run: |
           UPSTREAM_DIGEST=$(docker buildx imagetools inspect \
             ghcr.io/open-webui/open-terminal:latest \
             --format '{{json .Manifest.Digest}}')
           echo "Upstream digest: ${UPSTREAM_DIGEST}"
-          
+
           HARBOR_DIGEST=$(docker buildx imagetools inspect \
             ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:latest \
             --format '{{json .Manifest.Digest}}' 2>/dev/null || echo "none")
@@ -47,8 +52,21 @@ jobs:
             echo "Digest changed — mirroring..."
             docker pull ghcr.io/open-webui/open-terminal:latest
             docker tag ghcr.io/open-webui/open-terminal:latest \
-              {{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:latest
+              ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:latest
             docker push ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:latest
+            echo "changed=true" >> $GITHUB_OUTPUT
           else
             echo "No change, skipping mirror"
+            echo "changed=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Trigger Docker build
+        if: steps.mirror.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/docker.yml/dispatches" \
+            -d '{"ref":"main"}'
