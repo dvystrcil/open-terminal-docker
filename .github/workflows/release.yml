@@ -7,7 +7,7 @@ on:
 env:
   INTERNAL_REGISTRY: harbor-core.harbor.svc.cluster.local
   PROJECT: open-terminal
-  IMAGE_NAME: open-terminal-docker
+  IMAGE_NAME: open-terminal
 
 jobs:
   promote:
