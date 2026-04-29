@@ -1,6 +1,6 @@
 # Wrapper image — extends ghcr.io/open-webui/open-terminal with
 # additional tools and environment configuration.
-FROM ghcr.io/open-webui/open-terminal:latest
+FROM harbor-core.harbor.svc.cluster.local/ghcr-proxy/open-webui/open-terminal:latest
 
 USER root
 
