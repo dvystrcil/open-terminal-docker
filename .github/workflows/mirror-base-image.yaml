@@ -36,10 +36,12 @@ jobs:
           UPSTREAM_DIGEST=$(docker buildx imagetools inspect \
             ghcr.io/open-webui/open-terminal:latest \
             --format '{{json .Manifest.Digest}}')
+          echo "Upstream digest: ${UPSTREAM_DIGEST}"
           
           HARBOR_DIGEST=$(docker buildx imagetools inspect \
             ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:latest \
             --format '{{json .Manifest.Digest}}' 2>/dev/null || echo "none")
+          echo "Harbor digest: ${HARBOR_DIGEST}"
 
           if [ "$UPSTREAM_DIGEST" != "$HARBOR_DIGEST" ]; then
             echo "Digest changed — mirroring..."
