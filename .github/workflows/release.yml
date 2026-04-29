@@ -13,7 +13,7 @@ jobs:
   promote:
     runs-on: open-terminal-docker-runner
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Fetch secrets from Infisical
@@ -65,3 +65,31 @@ jobs:
       - name: Inspect image
         run: |
           docker buildx imagetools inspect ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+
+      - name: Generate AI release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          PREV_TAG=$(gh release list --limit 10 --json tagName \
+            -q "[.[] | select(.tagName != \"$TAG\")] | .[0].tagName")
+
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(gh api "repos/${{ github.repository }}/compare/${PREV_TAG}...${TAG}" \
+              --jq '[.commits[] | .commit.message | split("\n")[0]] | join("\n")')
+          else
+            COMMITS="Initial release"
+          fi
+
+          PROMPT="Write release notes for open-terminal ${TAG}, a self-hosted web terminal Docker image. Based on these commits since ${PREV_TAG}:\n\n${COMMITS}\n\nUse markdown with brief sections (What's Changed, etc.). Be concise and user-focused. Do not include preamble or sign-off."
+
+          NOTES=$(curl -sf --max-time 120 \
+            http://ollama.ollama.svc.cluster.local/api/generate \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg model "gemma4:31b" --arg prompt "$PROMPT" \
+              '{model: $model, prompt: $prompt, stream: false}')" \
+            | jq -r .response)
+
+          if [ -n "$NOTES" ]; then
+            gh release edit "$TAG" --notes "$NOTES"
+          fi
