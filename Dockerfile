@@ -51,6 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pandoc \
     && rm -rf /var/lib/apt/lists/*
 
+RUN pip3 install --no-cache-dir PyJWT cryptography --break-system-packages    
 
 # ACT — run GitHub Actions workflows locally
 RUN curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/nektos/act/master/install.sh | bash -s -- -b /usr/local/bin
