@@ -119,7 +119,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
-          LATEST_TAG=$(curl -sf -H "Authorization: Bearer $GITHUB_TOKEN" \
+          LATEST_TAG=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
             "https://api.github.com/repos/${REPO}/releases/latest" \
             | jq -r '.tag_name // "v0.0.0"')
 
