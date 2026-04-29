@@ -98,21 +98,18 @@ jobs:
             [registry."harbor-core.harbor.svc.cluster.local"]
               ca=["/etc/ssl/certs/ca-certificates.crt"]
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=dev,enable={{is_default_branch}}
-            type=sha,prefix=sha-
-
-      - name: Create manifest list and push
+      - name: Create and push manifest list
+        env:
+          DOCKER_CLI_EXPERIMENTAL: enabled
+          SHA_TAG: sha-${{ github.sha }}
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:dev-amd64 \
-            ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:dev-arm64
+          for TAG in dev "$SHA_TAG"; do
+            docker manifest create \
+              ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:$TAG \
+              ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:dev-amd64 \
+              ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:dev-arm64
+            docker manifest push ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:$TAG
+          done
 
       - name: Inspect image
         run: |
