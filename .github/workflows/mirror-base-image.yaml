@@ -1,0 +1,52 @@
+# .github/workflows/mirror-base-image.yaml
+on:
+  schedule:
+    - cron: '0 1 * * *'   # daily at 1am  
+  workflow_dispatch:
+  
+env:
+  INTERNAL_REGISTRY: harbor-core.harbor.svc.cluster.local
+  PROJECT: open-terminal
+  IMAGE_NAME: open-terminal
+
+jobs:
+  mirror:
+    runs-on: open-terminal-docker-runner
+    steps:
+      - name: Fetch secrets from Infisical
+        uses: Infisical/secrets-action@v1.0.7
+        with:
+          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          env-slug: prod
+          project-slug: homelab-bz-gt
+          secret-path: /
+          export-type: env
+          domain: http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080
+  
+      - name: Log in to Harbor (internal)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.INTERNAL_REGISTRY }}
+          username: ${{ env.HB_USERNAME }}
+          password: ${{ env.HB_PASSWORD }}
+          
+      - name: Check and mirror base image
+        run: |
+          UPSTREAM_DIGEST=$(docker buildx imagetools inspect \
+            ghcr.io/open-webui/open-terminal:latest \
+            --format '{{json .Manifest.Digest}}')
+          
+          HARBOR_DIGEST=$(docker buildx imagetools inspect \
+            harbor.yourdomain.com/open-webui/open-terminal:latest \
+            --format '{{json .Manifest.Digest}}' 2>/dev/null || echo "none")
+
+          if [ "$UPSTREAM_DIGEST" != "$HARBOR_DIGEST" ]; then
+            echo "Digest changed — mirroring..."
+            docker pull ghcr.io/open-webui/open-terminal:latest
+            docker tag ghcr.io/open-webui/open-terminal:latest \
+              {{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:latest
+            docker push ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:latest
+          else
+            echo "No change, skipping mirror"
+          fi
