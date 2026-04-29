@@ -56,30 +56,16 @@ jobs:
             [registry."harbor-core.harbor.svc.cluster.local"]
               ca=["/etc/ssl/certs/ca-certificates.crt"]
 
-      - name: Build and push by digest
+      - name: Build and push
         uses: docker/build-push-action@v7
-        id: build
         with:
           context: .
           file: Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
-          outputs: type=image,name=${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          tags: ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:${{ matrix.platform == 'linux/amd64' && 'dev-amd64' || 'dev-arm64' }}
           cache-from: type=registry,ref=${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
           cache-to: type=registry,ref=${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }},mode=max
-
-      - name: Export digest
-        run: |
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: digests-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
 
   merge:
     runs-on: open-terminal-docker-runner
@@ -88,8 +74,6 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
-
       - name: Fetch secrets from Infisical
         uses: Infisical/secrets-action@v1.0.7
         with:
@@ -114,12 +98,6 @@ jobs:
             [registry."harbor-core.harbor.svc.cluster.local"]
               ca=["/etc/ssl/certs/ca-certificates.crt"]
 
-      - uses: actions/download-artifact@v4
-        with:
-          path: /tmp/digests
-          pattern: digests-*
-          merge-multiple: true
-
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
@@ -130,11 +108,11 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Create manifest list and push
-        working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+            ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:dev-amd64 \
+            ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:dev-arm64
 
       - name: Inspect image
         run: |
