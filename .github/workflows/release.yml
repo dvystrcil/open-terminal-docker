@@ -50,12 +50,17 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      # Retag dev → semver + latest — no rebuild
+      # Retag dev-amd64/dev-arm64 → semver + latest — no rebuild
       - name: Promote dev image to release tags
+        env:
+          DOCKER_CLI_EXPERIMENTAL: enabled
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:dev
+          for TAG in $(jq -cr '[.tags[]] | unique | .[]' <<< "$DOCKER_METADATA_OUTPUT_JSON"); do
+            docker manifest create "$TAG" \
+              ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:dev-amd64 \
+              ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:dev-arm64
+            docker manifest push "$TAG"
+          done
 
       - name: Inspect image
         run: |
