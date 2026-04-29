@@ -68,15 +68,19 @@ jobs:
 
       - name: Generate AI release notes
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
         run: |
-          PREV_TAG=$(gh release list --limit 10 --json tagName \
-            -q "[.[] | select(.tagName != \"$TAG\")] | .[0].tagName")
+          API="https://api.github.com/repos/${REPO}"
+          AUTH="Authorization: Bearer $GITHUB_TOKEN"
+
+          PREV_TAG=$(curl -sf -H "$AUTH" "${API}/releases" \
+            | jq -r "[.[] | select(.tag_name != \"$TAG\")] | .[0].tag_name // empty")
 
           if [ -n "$PREV_TAG" ]; then
-            COMMITS=$(gh api "repos/${{ github.repository }}/compare/${PREV_TAG}...${TAG}" \
-              --jq '[.commits[] | .commit.message | split("\n")[0]] | join("\n")')
+            COMMITS=$(curl -sf -H "$AUTH" "${API}/compare/${PREV_TAG}...${TAG}" \
+              | jq -r '[.commits[] | .commit.message | split("\n")[0]] | join("\n")')
           else
             COMMITS="Initial release"
           fi
@@ -91,5 +95,8 @@ jobs:
             | jq -r .response)
 
           if [ -n "$NOTES" ]; then
-            gh release edit "$TAG" --notes "$NOTES"
+            RELEASE_ID=$(curl -sf -H "$AUTH" "${API}/releases/tags/${TAG}" | jq -r .id)
+            curl -sf -X PATCH -H "$AUTH" -H "Content-Type: application/json" \
+              "${API}/releases/${RELEASE_ID}" \
+              -d "$(jq -n --arg body "$NOTES" '{body: $body}')"
           fi
