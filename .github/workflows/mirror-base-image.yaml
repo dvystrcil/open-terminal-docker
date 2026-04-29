@@ -38,7 +38,7 @@ jobs:
             --format '{{json .Manifest.Digest}}')
           
           HARBOR_DIGEST=$(docker buildx imagetools inspect \
-            harbor.yourdomain.com/open-webui/open-terminal:latest \
+            ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:latest \
             --format '{{json .Manifest.Digest}}' 2>/dev/null || echo "none")
 
           if [ "$UPSTREAM_DIGEST" != "$HARBOR_DIGEST" ]; then
