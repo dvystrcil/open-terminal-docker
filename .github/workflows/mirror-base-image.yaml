@@ -1,4 +1,4 @@
-# .github/workflows/mirror-base-image.yaml
+name: Mirror Base Image
 on:
   schedule:
     - cron: '0 1 * * *'   # daily at 1am  
@@ -6,8 +6,8 @@ on:
   
 env:
   INTERNAL_REGISTRY: harbor-core.harbor.svc.cluster.local
-  PROJECT: open-terminal
-  IMAGE_NAME: open-terminal
+  PROJECT: ghcr-proxy
+  IMAGE_NAME: open-webui/open-terminal
 
 jobs:
   mirror:
