@@ -76,6 +76,19 @@ if [ -n "${GITHUB_APP_ID:-}" ] && \
     echo "GitHub App: refresh loop started (PID $!)"
 fi
 
+# Install a git credential helper that reads the current token from disk at
+# authentication time so git operations in long-running shells never use a
+# stale token from a frozen env var.
+sudo tee /usr/local/bin/git-credential-github-token > /dev/null << 'CRED'
+#!/bin/bash
+TOKEN_FILE="/run/secrets/github_token"
+[ -f "$TOKEN_FILE" ] || TOKEN_FILE="/tmp/github_token"
+[ -f "$TOKEN_FILE" ] || exit 1
+printf 'username=x-access-token\npassword=%s\n' "$(cat "$TOKEN_FILE")"
+CRED
+sudo chmod +x /usr/local/bin/git-credential-github-token
+git config --global credential.helper /usr/local/bin/git-credential-github-token
+
 # Fix permissions of the home directory if the user doesn't own it
 OWNER=$(stat -c '%U' /home/user 2>/dev/null || echo "user")
 
@@ -96,10 +109,35 @@ export GIT_PAGER=cat
 export GIT_CONFIG_GLOBAL=/dev/null
 export LESS=-RXF
 
-if [ -f /tmp/github_token ]; then
-    export GH_TOKEN="$(cat /tmp/github_token)"
+# Resolve the current GitHub token from whichever path is available.
+# /run/secrets/github_token is the K8s-managed file updated by the CronJob
+# without a pod restart. /tmp/github_token is the fallback written by the
+# container's own refresh loop.
+_gh_token_file() {
+    if [ -f /run/secrets/github_token ]; then
+        echo /run/secrets/github_token
+    elif [ -f /tmp/github_token ]; then
+        echo /tmp/github_token
+    fi
+}
+
+_current_gh_token() {
+    local f
+    f=$(_gh_token_file)
+    [ -n "$f" ] && cat "$f"
+}
+
+TOKEN_FILE=$(_gh_token_file)
+if [ -n "$TOKEN_FILE" ]; then
+    export GH_TOKEN="$(cat "$TOKEN_FILE")"
     export GITHUB_TOKEN="$GH_TOKEN"
 fi
+
+# Wrap gh so long-running shells always read the current token from disk
+# rather than the value frozen in GH_TOKEN at shell-start time.
+gh() {
+    GH_TOKEN="$(_current_gh_token)" command gh "$@"
+}
 
 verify_pr() {
     local branch=$1
@@ -115,7 +153,7 @@ verify_push() {
 
 setup_git_auth() {
     local token
-    token="${1:-$(cat /tmp/github_token 2>/dev/null)}"
+    token="${1:-$(_current_gh_token)}"
     if [ -z "$token" ]; then
         echo "No GitHub token available" >&2
         return 1
