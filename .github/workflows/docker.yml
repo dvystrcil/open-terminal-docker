@@ -116,7 +116,7 @@ jobs:
 
       - name: Create GitHub release
         env:
-          GITHUB_TOKEN: ${{ env.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ env.GITHUB_PAT_AI }}
           REPO: ${{ github.repository }}
         run: |
           LATEST_TAG=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
