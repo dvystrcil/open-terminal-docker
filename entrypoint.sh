@@ -87,7 +87,6 @@ TOKEN_FILE="/run/secrets/github_token"
 printf 'username=x-access-token\npassword=%s\n' "$(cat "$TOKEN_FILE")"
 CRED
 sudo chmod +x /usr/local/bin/git-credential-github-token
-git config --global credential.helper /usr/local/bin/git-credential-github-token
 
 # Fix permissions of the home directory if the user doesn't own it
 OWNER=$(stat -c '%U' /home/user 2>/dev/null || echo "user")
@@ -97,7 +96,10 @@ if [ "$OWNER" != "user" ]; then
 fi
 
 # add helper files to the user's home directory
+# NOTE: /app/helpers/.gitconfig exists and will overwrite $HOME/.gitconfig,
+# so the credential.helper config must be set AFTER this copy.
 cp -r /app/helpers/. "$HOME/" 2>/dev/null || true
+git config --global credential.helper /usr/local/bin/git-credential-github-token
 
 # Write open-terminal shell config to /etc/profile.d so it applies to every
 # user on every pod start — including multi-user provisioned accounts and
