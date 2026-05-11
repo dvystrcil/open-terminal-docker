@@ -1,13 +1,15 @@
 """
 bible_bridge.py — Story Bible HTTP Bridge
 ==========================================
-version: 1.1
+version: 1.2
 
 Changelog:
   1.0 — Initial multi-project release. BIBLE_ROOT, project parameter on all
         endpoints, path-traversal protection, safe.directory registration,
         /bible/sync and /bible/pr endpoints.
   1.1 — Added version constant and /version endpoint. No functional changes.
+  1.2 — ThreadingHTTPServer so a slow /bible/pull (git network op) no longer
+        serializes fast /bible reads from concurrent callers.
 
 Runs in the open-terminal pod. Exposes git-cloned story bible projects
 over HTTP so the Fiction Writing Filter (in the pipelines pod) can read
@@ -54,7 +56,7 @@ import logging
 import os
 import subprocess
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 logging.basicConfig(
@@ -449,7 +451,12 @@ if __name__ == "__main__":
     log.info(f"Bible root: {BIBLE_ROOT}")
     log.info(f"Auth: {'enabled' if BRIDGE_TOKEN else 'disabled (set BRIDGE_TOKEN to enable)'}")
 
-    server = HTTPServer(("0.0.0.0", BRIDGE_PORT), BridgeHandler)
+    # ThreadingHTTPServer (vs. HTTPServer): single-threaded HTTPServer
+    # serializes ALL requests, so a slow /bible/pull or /bible/pr
+    # (git network ops, can take seconds) would block fast /bible reads
+    # and /version from concurrent callers. Same wedge pattern that hit
+    # the ollama-sidecar on 2026-05-11. Cheap fix, identical mechanics.
+    server = ThreadingHTTPServer(("0.0.0.0", BRIDGE_PORT), BridgeHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
