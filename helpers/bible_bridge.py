@@ -66,7 +66,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("bible_bridge")
 
-VERSION      = "1.1"
+VERSION      = "1.2"
 BIBLE_ROOT   = os.environ.get("BIBLE_ROOT", "/home/u3aa02715/fiction")
 BRIDGE_PORT  = int(os.environ.get("BRIDGE_PORT", "8765"))
 BRIDGE_TOKEN = os.environ.get("BRIDGE_TOKEN", "")
