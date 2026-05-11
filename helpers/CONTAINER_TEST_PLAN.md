@@ -156,11 +156,11 @@ git fetch origin 2>&1 | head -5
 
 **Expected Output:**
 ```
-Remote URL contains: x-access-token:ghp_xxx@github.com
+Remote URL is bare HTTPS: https://github.com/<owner>/<repo>.git  (no embedded creds)
 Fetch completes without credential prompt
 ```
 
-**Pass Criteria:** No "could not read Username" error
+**Pass Criteria:** No "could not read Username" error AND no embedded `x-access-token:TOKEN@` in the URL. Auth comes from the credential helper at `/usr/local/bin/git-credential-github-token` (which produces rotating `ghs_` installation tokens from the configured GitHub App). The historical antipattern was to embed a `ghp_` PAT into the URL, which bypassed the helper and rotted when the PAT expired — see [`open-terminal-docker@049f285`](https://github.com/dvystrcil/open-terminal-docker/commit/049f285) for the removal of the `setup_git_auth` function that used to do this.
 
 
 ### TC8: Test Full PR Workflow (End-to-End)
