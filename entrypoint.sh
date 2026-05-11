@@ -153,19 +153,12 @@ verify_push() {
     git ls-remote --heads origin "$branch" 2>&1 | grep "$branch" && echo "✓ Branch pushed successfully" || echo "✗ Branch not found on remote"
 }
 
-setup_git_auth() {
-    local token
-    token="${1:-$(_current_gh_token)}"
-    if [ -z "$token" ]; then
-        echo "No GitHub token available" >&2
-        return 1
-    fi
-    local current_url
-    current_url=$(git remote get-url origin 2>/dev/null) || { echo "No git remote 'origin' found"; return 1; }
-    local new_url
-    new_url=$(echo "$current_url" | sed "s|https://|https://x-access-token:${token}@|")
-    git remote set-url origin "$new_url" 2>/dev/null && echo "✓ Remote URL updated with auth" || echo "Note: Remote may already be configured"
-}
+# NOTE: setup_git_auth() was removed 2026-05-11. It embedded the current
+# token into the git remote URL, which bypassed the GitHub-App credential
+# helper installed at /usr/local/bin/git-credential-github-token and
+# caused stale tokens to persist in .git/config across sessions. The
+# helper handles auth correctly with rotating ghs_ installation tokens;
+# no embedded URLs needed.
 EOF
 
 # Seed essential dotfiles when /home/user is bind-mounted empty.
