@@ -90,6 +90,12 @@ jobs:
           registry: ${{ env.INTERNAL_REGISTRY }}
           username: ${{ env.HB_USERNAME }}
           password: ${{ env.HB_PASSWORD }}
+      
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ env.CICD_APP_CLIENT_ID }}
+          private-key: ${{ env.CICD_APP_PRIVATE_KEY }}
 
       - uses: docker/setup-buildx-action@v4
         with:
@@ -116,7 +122,7 @@ jobs:
 
       - name: Create GitHub release
         env:
-          GITHUB_TOKEN: ${{ env.GITHUB_PAT_AI }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
         run: |
           LATEST_TAG=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
