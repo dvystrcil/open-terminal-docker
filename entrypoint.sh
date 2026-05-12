@@ -101,6 +101,71 @@ fi
 cp -r /app/helpers/. "$HOME/" 2>/dev/null || true
 git config --global credential.helper /usr/local/bin/git-credential-github-token
 
+# ── Credential drift guard ────────────────────────────────────────────────
+# Defends against two recurring failure modes:
+#   1. ~/.gitconfig credential.helper getting silently changed (homelab#58 —
+#      caused 7 days of broken fiction-writer git pushes after a manual edit
+#      switched it from this helper to 'store')
+#   2. Repo-level .git/config remote URLs getting embedded credentials baked
+#      in (homelab#59 — discovered across 10 repos when audit-after-fix ran
+#      on a single instance). Each is its own drift surface; both must be
+#      monitored.
+#
+# Runs once at pod start (after the initial set above) AND every 600s in
+# a background loop. Drift events are logged to stderr so they're visible
+# in `kubectl logs`.
+
+_drift_guard_helper_path="/usr/local/bin/git-credential-github-token"
+_drift_guard_home="/home/u3aa02715"
+
+_drift_check_gitconfig_helper() {
+    local target="$_drift_guard_home/.gitconfig"
+    [ -f "$target" ] || return 0
+    local actual
+    actual=$(grep -E '^[[:space:]]*helper' "$target" 2>/dev/null | head -1 | sed 's/^.*=[[:space:]]*//' | tr -d '[:space:]')
+    case "$actual" in
+        "$_drift_guard_helper_path"|"!$_drift_guard_helper_path") return 0 ;;
+        *)
+            echo "$(date -u +%FT%TZ) drift-guard: gitconfig credential.helper drifted to '$actual' — restoring" >&2
+            sudo -u u3aa02715 git config --global --replace-all credential.helper "$_drift_guard_helper_path" 2>/dev/null \
+              || git -c safe.directory=* config --file "$target" credential.helper "$_drift_guard_helper_path" 2>/dev/null \
+              || true
+            ;;
+    esac
+}
+
+_drift_check_embedded_creds() {
+    # Find every repo's .git/config under the user's home + strip embedded creds.
+    find "$_drift_guard_home" -maxdepth 6 -name 'config' -path '*/.git/*' 2>/dev/null | while read -r cfg; do
+        # Match credentials inside https URLs: //<user>:<token>@host or //<token>@host
+        if grep -qE '^[[:space:]]*url[[:space:]]*=[[:space:]]*https?://[^/@[:space:]]+@' "$cfg" 2>/dev/null; then
+            local repo_dir
+            repo_dir=$(dirname "$(dirname "$cfg")")
+            local masked
+            masked=$(grep -E '^[[:space:]]*url' "$cfg" | head -1 | sed 's|//[^@]*@|//<REDACTED>@|')
+            echo "$(date -u +%FT%TZ) drift-guard: embedded creds in $repo_dir → was '$masked' — stripping" >&2
+            sed -i -E 's|(url[[:space:]]*=[[:space:]]*https?://)[^/@]+@|\1|' "$cfg"
+        fi
+    done
+}
+
+# Run once at startup
+_drift_check_gitconfig_helper
+_drift_check_embedded_creds
+
+# And every 600s (10 minutes) in the background. Short-enough cadence that
+# a mid-session drift is caught before the next user action that depends on
+# correct credential plumbing.
+(
+    while true; do
+        sleep 600
+        _drift_check_gitconfig_helper || true
+        _drift_check_embedded_creds || true
+    done
+) &
+echo "$(date -u +%FT%TZ) drift-guard: background loop started (PID $!)"
+# ── End credential drift guard ────────────────────────────────────────────
+
 # Write open-terminal shell config to /etc/profile.d so it applies to every
 # user on every pod start — including multi-user provisioned accounts and
 # after pod restarts where the PVC already contains a .bashrc.
