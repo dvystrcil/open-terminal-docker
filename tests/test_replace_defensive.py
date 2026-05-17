@@ -89,7 +89,10 @@ def test_target_equals_first_line_of_replacement_is_refused():
     assert r.status_code == 400, r.text
     detail = r.json()["detail"]
     assert "first line of the replacement" in detail
-    assert "read_file" in detail and "write_file" in detail
+    # Error hint should still mention read_file (for anchor discovery).
+    # The mention of the new insert/append ops is covered specifically by
+    # test_insert_append.py::test_defensive_check_message_references_new_ops.
+    assert "read_file" in detail
     # File must be unchanged.
     assert fs.files["/x.md"] == "# Existing\n\nbody\n"
 
