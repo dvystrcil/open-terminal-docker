@@ -21,9 +21,9 @@ jobs:
         uses: qodo-ai/pr-agent@main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CONFIG.MODEL: "ollama/qwen2.5-coder:7b"
-          CONFIG.MODEL_WEAK: "ollama/qwen2.5-coder:7b"
-          CONFIG.FALLBACK_MODELS: '["ollama/qwen2.5-coder:7b"]'
+          CONFIG.MODEL: "ollama/qwen2.5-coder:14b"
+          CONFIG.MODEL_WEAK: "ollama/qwen2.5-coder:14b"
+          CONFIG.FALLBACK_MODELS: '["ollama/qwen2.5-coder:14b"]'
           CONFIG.CUSTOM_MODEL_MAX_TOKENS: "32768"
           CONFIG.DUPLICATE_PROMPT_EXAMPLES: "true"
           OLLAMA.API_BASE: "http://ollama.ollama.svc.cluster.local"
