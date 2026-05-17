@@ -650,6 +650,28 @@ async def replace_file_content(request: ReplaceRequest, fs: UserFS = Depends(get
         raise HTTPException(status_code=400, detail=str(e))
 
     for chunk in request.replacements:
+        # A target identical to the first non-empty line of the replacement is
+        # the smoking-gun signature of an "insert new section" being expressed
+        # as a find-and-replace. Refuse before the generic "Target string not
+        # found" 400 fires, so the caller learns the right shape instead of
+        # concluding the file was truncated. Tracked: dvystrcil/homelab#107.
+        target_stripped = chunk.target.strip()
+        first_replacement_line = next(
+            (line.strip() for line in chunk.replacement.splitlines() if line.strip()),
+            "",
+        )
+        if target_stripped and target_stripped == first_replacement_line:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Target string is identical to the first line of the "
+                    "replacement. This usually means you want to ADD a new "
+                    "section but expressed it as a find-and-replace. Use "
+                    "read_file to inspect existing headings, then write_file "
+                    "to overwrite with the desired content."
+                ),
+            )
+
         if chunk.start_line or chunk.end_line:
             lines = content.splitlines(keepends=True)
             start = (chunk.start_line or 1) - 1
