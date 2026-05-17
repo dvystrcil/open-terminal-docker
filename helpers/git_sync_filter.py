@@ -131,6 +131,20 @@ class Pipeline:
                 "Leave empty to use an auto-generated title."
             ),
         )
+        sync_actor: str = Field(
+            default="",
+            description=(
+                "Identifier passed to bible_bridge as the `actor` field. "
+                "The bridge uses it to set the commit author "
+                "(dvystrcil-<actor> <actor@dvystrcil.local>) so forensics "
+                "can tell which agent made each commit. Per dvystrcil/"
+                "homelab#125. Leave empty (default) to let the bridge "
+                "fall back to its platform default 'owui'. Override "
+                "per-model: this filter is attached to fiction-writer "
+                "(set to 'fiction') and dual-model-reasoner-coder-n8n "
+                "(set to 'dmf') for direct attribution."
+            ),
+        )
 
     def __init__(self):
         self.type = "filter"
@@ -194,10 +208,14 @@ class Pipeline:
             commit_msg = self.valves.sync_commit_message.strip() or (
                 "sync: manual sync-up " + time.strftime("%Y-%m-%d %H:%M")
             )
+            payload = {"project": project, "commit_message": commit_msg}
+            actor = self.valves.sync_actor.strip()
+            if actor:
+                payload["actor"] = actor
             resp = requests.post(
                 self._url("/bible/sync"),
                 headers=self._headers(),
-                json={"project": project, "commit_message": commit_msg},
+                json=payload,
                 timeout=45,
             )
             resp.raise_for_status()
@@ -249,16 +267,20 @@ class Pipeline:
             )
             pr_title = self.valves.sync_pr_title.strip() or commit_msg
             branch = "fwf/" + time.strftime("%Y%m%d-%H%M%S")
+            payload = {
+                "project": project,
+                "branch": branch,
+                "commit_message": commit_msg,
+                "pr_title": pr_title,
+                "base_branch": self.valves.sync_pr_base_branch,
+            }
+            actor = self.valves.sync_actor.strip()
+            if actor:
+                payload["actor"] = actor
             resp = requests.post(
                 self._url("/bible/pr"),
                 headers=self._headers(),
-                json={
-                    "project": project,
-                    "branch": branch,
-                    "commit_message": commit_msg,
-                    "pr_title": pr_title,
-                    "base_branch": self.valves.sync_pr_base_branch,
-                },
+                json=payload,
                 timeout=60,
             )
             resp.raise_for_status()

@@ -54,6 +54,7 @@ Environment variables:
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -113,10 +114,12 @@ def list_projects() -> list[str]:
 
 # ── Git helpers ───────────────────────────────────────────────────────────────
 
-def git(project_path: str, *args) -> tuple[bool, str]:
+def git(project_path: str, *args, env: dict | None = None) -> tuple[bool, str]:
     cmd = ["git", "-C", project_path] + list(args)
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, env=env
+        )
         if result.returncode != 0:
             log.warning(f"git {' '.join(args)} in {project_path} failed: {result.stderr.strip()}")
             return False, result.stderr.strip()
@@ -124,6 +127,34 @@ def git(project_path: str, *args) -> tuple[bool, str]:
     except Exception as e:
         log.warning(f"git {' '.join(args)} exception: {e}")
         return False, str(e)
+
+
+def _actor_env(actor: str | None) -> dict | None:
+    """Build a git author/committer env dict for the given actor, or None if
+    no actor is set (preserves pod default git config for backward-compat).
+
+    Tracked: dvystrcil/homelab#125. Per-actor identities let `git log` say
+    directly who made each commit — fiction-writer / Claude / dmf / etc —
+    instead of all collapsing to the pod's default `Daniel Vystrcil` identity.
+
+    Actor names are sanitised conservatively (lowercase alphanumeric +
+    hyphen) so a malformed value from a caller can't inject shell-meaningful
+    characters into env vars. An empty post-sanitisation name yields None,
+    keeping the pod default.
+    """
+    if not actor:
+        return None
+    safe = re.sub(r"[^a-z0-9-]", "", actor.lower())
+    if not safe:
+        return None
+    name = f"dvystrcil-{safe}"
+    email = f"{safe}@dvystrcil.local"
+    env = os.environ.copy()
+    env["GIT_AUTHOR_NAME"] = name
+    env["GIT_AUTHOR_EMAIL"] = email
+    env["GIT_COMMITTER_NAME"] = name
+    env["GIT_COMMITTER_EMAIL"] = email
+    return env
 
 
 def git_pull(project_path: str) -> tuple[bool, str]:
@@ -219,7 +250,17 @@ def write_bible(
 
 # ── Bible sync (add-all + commit + push) ─────────────────────────────────────
 
-def sync_bible(project_path: str, commit_message: str = None) -> tuple[bool, str]:
+def sync_bible(
+    project_path: str,
+    commit_message: str = None,
+    actor: str = None,
+) -> tuple[bool, str]:
+    """Add-all + commit + push for a project's working tree.
+
+    `actor` (homelab#125): when set, the commit is authored as
+    `dvystrcil-<actor> <actor@dvystrcil.local>` instead of the pod's
+    default git config. Forensic identity per caller.
+    """
     result = subprocess.run(
         ["git", "-C", project_path, "status", "--porcelain"],
         capture_output=True, text=True, timeout=10
@@ -230,7 +271,8 @@ def sync_bible(project_path: str, commit_message: str = None) -> tuple[bool, str
     if not ok:
         return False, "git add -A failed"
     msg = commit_message or ("sync: manual sync-up " + time.strftime("%Y-%m-%d %H:%M"))
-    ok, out = git(project_path, "commit", "-m", msg)
+    author_env = _actor_env(actor)
+    ok, out = git(project_path, "commit", "-m", msg, env=author_env)
     if not ok:
         if "nothing to commit" in out.lower():
             return True, "nothing to commit — already up to date"
@@ -238,7 +280,8 @@ def sync_bible(project_path: str, commit_message: str = None) -> tuple[bool, str
     ok, out = git(project_path, "push", GIT_REMOTE, GIT_BRANCH)
     if not ok:
         return False, "git push failed: " + out
-    log.info("sync commit+push: " + msg)
+    actor_tag = f" by dvystrcil-{re.sub(r'[^a-z0-9-]', '', actor.lower())}" if actor else ""
+    log.info("sync commit+push" + actor_tag + ": " + msg)
     return True, "committed and pushed: '" + msg + "'"
 
 
@@ -250,7 +293,10 @@ def pr_bible(
     commit_message: str,
     pr_title: str,
     base_branch: str,
+    actor: str = None,
 ) -> tuple[bool, str, str]:
+    """Branch + commit + push + open PR. `actor` (homelab#125) sets commit
+    author to `dvystrcil-<actor>` instead of pod default."""
     import shutil
     if not shutil.which("gh"):
         return False, "gh CLI not found — ensure it is installed in the open-terminal image", ""
@@ -267,7 +313,8 @@ def pr_bible(
     if not ok:
         git(project_path, "checkout", base_branch)
         return False, "git add -A failed", ""
-    ok, out = git(project_path, "commit", "-m", commit_message)
+    author_env = _actor_env(actor)
+    ok, out = git(project_path, "commit", "-m", commit_message, env=author_env)
     if not ok:
         git(project_path, "checkout", base_branch)
         return False, "git commit failed: " + out, ""
@@ -399,7 +446,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": err})
                 return
             commit_message = body.get("commit_message")
-            ok, status = sync_bible(project_path, commit_message)
+            # homelab#125 — per-caller identity. If unspecified, fall back to
+            # "owui": anything calling this bridge is by definition an OWUI
+            # surface (filters, slash commands, the UI), so attributing to the
+            # OWUI platform is the right semantic default. Specific filters /
+            # models override via the `actor` field.
+            actor = body.get("actor") or "owui"
+            ok, status = sync_bible(project_path, commit_message, actor=actor)
             self._send_json(200 if ok else 500, {"ok": ok, "status": status})
 
         elif parsed.path == "/bible/pr":
@@ -411,8 +464,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
             commit_message = body.get("commit_message", "sync: " + time.strftime("%Y-%m-%d %H:%M"))
             pr_title = body.get("pr_title", commit_message)
             base_branch = body.get("base_branch", GIT_BRANCH)
+            # homelab#125 — same fallback rule as /bible/sync above.
+            actor = body.get("actor") or "owui"
             ok, status, pr_url = pr_bible(
-                project_path, branch, commit_message, pr_title, base_branch
+                project_path, branch, commit_message, pr_title, base_branch, actor=actor
             )
             self._send_json(
                 200 if ok else 500,
