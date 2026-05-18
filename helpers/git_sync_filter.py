@@ -105,9 +105,9 @@ class Pipeline:
         sync_project: str = Field(
             default="",
             description=(
-                "Git project name to sync (subdirectory under BIBLE_ROOT on the bridge). "
-                "Leave empty to sync all uncommitted changes across all projects, "
-                "or set to a specific project name e.g. 'standing-patrol'."
+                "Git project name to sync (subdirectory under BIBLE_ROOT on the bridge), "
+                "e.g. 'standing-patrol'. Required — /sync_up, /sync_down, and /sync_pr "
+                "all refuse to run if this is empty."
             ),
         )
         sync_commit_message: str = Field(
