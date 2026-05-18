@@ -157,6 +157,39 @@ def _actor_env(actor: str | None) -> dict | None:
     return env
 
 
+def _ensure_on_default_branch(project_path: str, op_label: str) -> tuple[bool, str]:
+    """If the working tree is on a non-default branch, try to switch back to
+    GIT_BRANCH (main). Refuses if there are uncommitted changes.
+
+    Used at the entry point of every write/pull operation so the bridge
+    doesn't accumulate commits on orphan feature branches left behind by
+    earlier `/bible/pr` flows (homelab#122, dvystrcil/open-webui#26).
+
+    Returns (True, "") on success or when already on the default branch.
+    Returns (False, error_message) when the switch can't be safely done.
+    """
+    cb_ok, current_branch = git(project_path, "branch", "--show-current")
+    current_branch = current_branch.strip() if cb_ok else ""
+    if not current_branch or current_branch == GIT_BRANCH:
+        return True, ""
+    st_ok, status_out = git(project_path, "status", "--porcelain")
+    if st_ok and status_out.strip():
+        msg = (
+            f"{op_label}: working tree on '{current_branch}' has uncommitted "
+            f"changes; refusing to auto-switch to '{GIT_BRANCH}'. Resolve "
+            f"manually: commit/stash changes, then retry."
+        )
+        log.warning(msg)
+        return False, msg
+    co_ok, co_out = git(project_path, "checkout", GIT_BRANCH)
+    if not co_ok:
+        msg = f"{op_label}: failed to switch from '{current_branch}' to '{GIT_BRANCH}': {co_out}"
+        log.warning(msg)
+        return False, msg
+    log.info(f"{op_label}: auto-switched from '{current_branch}' to '{GIT_BRANCH}'")
+    return True, ""
+
+
 def git_pull(project_path: str) -> tuple[bool, str]:
     """Pull `origin/<GIT_BRANCH>` into the working tree, self-healing common
     wedge states first.
@@ -165,48 +198,15 @@ def git_pull(project_path: str) -> tuple[bool, str]:
     be sitting on a feature branch whose history has diverged from origin/main
     at the SHA level (squash rewrites). A blind `git pull --ff-only origin
     main` from that branch fails with "Not possible to fast-forward" — but
-    the model silently continues with stale bible content. Defensive steps:
-
-    1. If the working tree is on a non-default branch AND clean, auto-switch
-       back to the default branch before pulling. After a squash-merged PR
-       the feature branch is disposable; this is the common case.
-    2. If the working tree has uncommitted changes on a non-default branch,
-       refuse with a structured error rather than risking data loss on a
-       checkout.
-    3. After pull failure on main, return a clear actionable error so the
-       caller can surface it instead of silently degrading.
+    the model silently continues with stale bible content.
     """
     log.info(f"git pull — {project_path}")
+    ok, msg = _ensure_on_default_branch(project_path, "git pull")
+    if not ok:
+        return False, msg
 
-    # Step 1: detect current branch
-    cb_ok, current_branch = git(project_path, "branch", "--show-current")
-    current_branch = current_branch.strip() if cb_ok else ""
-
-    if current_branch and current_branch != GIT_BRANCH:
-        # Step 2: working tree clean before switching?
-        st_ok, status_out = git(project_path, "status", "--porcelain")
-        if st_ok and status_out.strip():
-            msg = (
-                f"working tree on '{current_branch}' has uncommitted changes; "
-                f"refusing to auto-switch to '{GIT_BRANCH}' before pull. "
-                f"Resolve manually: commit/stash changes, then retry."
-            )
-            log.warning(f"git pull: {msg}")
-            return False, msg
-        # Step 3: switch to default branch
-        co_ok, co_out = git(project_path, "checkout", GIT_BRANCH)
-        if not co_ok:
-            msg = f"failed to switch from '{current_branch}' to '{GIT_BRANCH}': {co_out}"
-            log.warning(f"git pull: {msg}")
-            return False, msg
-        log.info(f"git pull: auto-switched from '{current_branch}' to '{GIT_BRANCH}' before pull")
-
-    # Step 4: now pull
     ok, out = git(project_path, "pull", "--ff-only", GIT_REMOTE, GIT_BRANCH)
     if not ok:
-        # The most common remaining failure: local main has commits origin
-        # doesn't (the case homelab#118's atomicity fix now prevents going
-        # forward, but legacy state may still exist).
         msg = (
             f"git pull --ff-only failed on '{GIT_BRANCH}'. Likely cause: local "
             f"branch has commits origin doesn't. Recovery: `git checkout {GIT_BRANCH} "
@@ -267,6 +267,11 @@ def write_bible(
     append: bool,
     commit_message: str = None,
 ) -> tuple[bool, str]:
+    # Don't commit to whatever orphan branch we're parked on — auto-recover
+    # back to main first (homelab#122 + dvystrcil/open-webui#26).
+    ok, msg = _ensure_on_default_branch(project_path, "write_bible")
+    if not ok:
+        return False, msg
     filepath = os.path.join(project_path, filename)
     parent = os.path.dirname(filepath)
     if parent and not os.path.exists(parent):
@@ -314,6 +319,9 @@ def sync_bible(
     `dvystrcil-<actor> <actor@dvystrcil.local>` instead of the pod's
     default git config. Forensic identity per caller.
     """
+    ok, msg = _ensure_on_default_branch(project_path, "sync_bible")
+    if not ok:
+        return False, msg
     result = subprocess.run(
         ["git", "-C", project_path, "status", "--porcelain"],
         capture_output=True, text=True, timeout=10
@@ -361,6 +369,11 @@ def pr_bible(
     import shutil
     if not shutil.which("gh"):
         return False, "gh CLI not found — ensure it is installed in the open-terminal image", ""
+    # Branch from main, not from whatever orphan we might be parked on
+    # (homelab#122 + dvystrcil/open-webui#26).
+    base_ok, base_msg = _ensure_on_default_branch(project_path, "pr_bible")
+    if not base_ok:
+        return False, base_msg, ""
     result = subprocess.run(
         ["git", "-C", project_path, "status", "--porcelain"],
         capture_output=True, text=True, timeout=10
