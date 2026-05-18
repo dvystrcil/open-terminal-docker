@@ -25,14 +25,6 @@ jobs:
       - name: Checkout this repo
         uses: actions/checkout@v6
 
-      - name: Checkout homelab (for owui-import-pipeline.sh)
-        uses: actions/checkout@v6
-        with:
-          repository: dvystrcil/homelab
-          path: homelab
-          sparse-checkout: bin/owui-import-pipeline.sh
-          sparse-checkout-cone-mode: false
-
       - name: Fetch secrets from Infisical
         uses: Infisical/secrets-action@v1.0.16
         with:
@@ -43,6 +35,24 @@ jobs:
           secret-path: /open-terminal-docker
           export-type: env
           domain: http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080
+
+      - name: Mint cross-repo token via CICD App
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ env.CICD_APP_CLIENT_ID }}
+          private-key: ${{ env.CICD_APP_PRIVATE_KEY }}
+          repositories: homelab
+          owner: dvystrcil
+
+      - name: Checkout homelab (for owui-import-pipeline.sh)
+        uses: actions/checkout@v6
+        with:
+          repository: dvystrcil/homelab
+          path: homelab
+          sparse-checkout: bin/owui-import-pipeline.sh
+          sparse-checkout-cone-mode: false
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
