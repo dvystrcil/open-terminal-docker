@@ -32,7 +32,7 @@ jobs:
           client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
           env-slug: prod
           project-slug: homelab-bz-gt
-          secret-path: /open-terminal-docker
+          secret-path: /
           export-type: env
           domain: http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080
 
