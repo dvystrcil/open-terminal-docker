@@ -158,11 +158,64 @@ def _actor_env(actor: str | None) -> dict | None:
 
 
 def git_pull(project_path: str) -> tuple[bool, str]:
+    """Pull `origin/<GIT_BRANCH>` into the working tree, self-healing common
+    wedge states first.
+
+    Background (homelab#122): after a squash-merged PR, the working tree can
+    be sitting on a feature branch whose history has diverged from origin/main
+    at the SHA level (squash rewrites). A blind `git pull --ff-only origin
+    main` from that branch fails with "Not possible to fast-forward" — but
+    the model silently continues with stale bible content. Defensive steps:
+
+    1. If the working tree is on a non-default branch AND clean, auto-switch
+       back to the default branch before pulling. After a squash-merged PR
+       the feature branch is disposable; this is the common case.
+    2. If the working tree has uncommitted changes on a non-default branch,
+       refuse with a structured error rather than risking data loss on a
+       checkout.
+    3. After pull failure on main, return a clear actionable error so the
+       caller can surface it instead of silently degrading.
+    """
     log.info(f"git pull — {project_path}")
+
+    # Step 1: detect current branch
+    cb_ok, current_branch = git(project_path, "branch", "--show-current")
+    current_branch = current_branch.strip() if cb_ok else ""
+
+    if current_branch and current_branch != GIT_BRANCH:
+        # Step 2: working tree clean before switching?
+        st_ok, status_out = git(project_path, "status", "--porcelain")
+        if st_ok and status_out.strip():
+            msg = (
+                f"working tree on '{current_branch}' has uncommitted changes; "
+                f"refusing to auto-switch to '{GIT_BRANCH}' before pull. "
+                f"Resolve manually: commit/stash changes, then retry."
+            )
+            log.warning(f"git pull: {msg}")
+            return False, msg
+        # Step 3: switch to default branch
+        co_ok, co_out = git(project_path, "checkout", GIT_BRANCH)
+        if not co_ok:
+            msg = f"failed to switch from '{current_branch}' to '{GIT_BRANCH}': {co_out}"
+            log.warning(f"git pull: {msg}")
+            return False, msg
+        log.info(f"git pull: auto-switched from '{current_branch}' to '{GIT_BRANCH}' before pull")
+
+    # Step 4: now pull
     ok, out = git(project_path, "pull", "--ff-only", GIT_REMOTE, GIT_BRANCH)
-    if ok:
-        log.info(f"git pull: {out or 'already up to date'}")
-    return ok, out
+    if not ok:
+        # The most common remaining failure: local main has commits origin
+        # doesn't (the case homelab#118's atomicity fix now prevents going
+        # forward, but legacy state may still exist).
+        msg = (
+            f"git pull --ff-only failed on '{GIT_BRANCH}'. Likely cause: local "
+            f"branch has commits origin doesn't. Recovery: `git checkout {GIT_BRANCH} "
+            f"&& git reset --hard {GIT_REMOTE}/{GIT_BRANCH}` (destructive). Output: {out}"
+        )
+        log.warning(f"git pull: {msg}")
+        return False, msg
+    log.info(f"git pull: {out or 'already up to date'}")
+    return True, out
 
 
 # ── Bible read ────────────────────────────────────────────────────────────────
