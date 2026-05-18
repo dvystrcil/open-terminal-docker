@@ -1,7 +1,7 @@
 """
 title: Git Sync Filter
 author: custom
-version: 1.1
+version: 1.2
 license: MIT
 description: >
   A lightweight filter that adds /sync_up and /sync_down slash commands
@@ -20,9 +20,10 @@ description: >
     - Fiction Writing Assistant     (for story bible repos)
     - Any future models
 
-  Each model instance can have a different `sync_project` valve so that
-  /sync_up in the fiction assistant commits the bible, while /sync_up in
-  the coding assistant commits the code project.
+  Per-model project routing: set `model_project_map` to a
+  {model_id: project_name} dict so /sync_up in the fiction assistant
+  commits the bible while /sync_up in the coding assistant commits the
+  code project. Models not in the map fall back to `sync_project`.
 
   Install:
     Admin Panel > Settings > Pipelines > upload this file.
@@ -39,7 +40,7 @@ requirements: requests
 import logging
 import time
 import threading
-from typing import Optional
+from typing import Dict, Optional
 
 import requests
 from pydantic import BaseModel, Field
@@ -105,9 +106,21 @@ class Pipeline:
         sync_project: str = Field(
             default="",
             description=(
-                "Git project name to sync (subdirectory under BIBLE_ROOT on the bridge), "
-                "e.g. 'standing-patrol'. Required — /sync_up, /sync_down, and /sync_pr "
-                "all refuse to run if this is empty."
+                "Fallback git project name (subdirectory under BIBLE_ROOT on the bridge), "
+                "e.g. 'standing-patrol'. Used when the active model is not listed in "
+                "model_project_map. Required if model_project_map is empty — "
+                "/sync_up, /sync_down, and /sync_pr all refuse to run with no project resolved."
+            ),
+        )
+        model_project_map: Dict[str, str] = Field(
+            default_factory=dict,
+            description=(
+                "Per-model project overrides as {model_id: project_name}. "
+                "When /sync_* runs, the filter looks up the active model in this dict "
+                "and uses that project; falls back to sync_project if not present. "
+                "Example: "
+                "{\"fiction-writer\": \"standing-patrol\", "
+                "\"dual-model-reasoner-coder-n8n\": \"homelab\"}."
             ),
         )
         sync_commit_message: str = Field(
@@ -152,9 +165,13 @@ class Pipeline:
         self.valves = self.Valves()
 
     async def on_startup(self):
-        log.info("[sync] Git Sync Filter starting up v1.1")
+        log.info("[sync] Git Sync Filter starting up v1.2")
         log.info(f"[sync] Bridge: {self.valves.bridge_url}")
-        log.info(f"[sync] Project: {self.valves.sync_project or '(all)'}")
+        log.info(f"[sync] Fallback project: {self.valves.sync_project or '(unset)'}")
+        if self.valves.model_project_map:
+            log.info(f"[sync] Per-model map: {self.valves.model_project_map}")
+        else:
+            log.info("[sync] Per-model map: (empty — all models use fallback)")
         log.info(f"[sync] Auth: {'enabled' if self.valves.bridge_token else 'disabled'}")
 
     async def on_shutdown(self):
@@ -198,12 +215,30 @@ class Pipeline:
         lower = message.lower().strip()
         return any(lower.startswith(p) or lower == p.strip() for p in SYNC_PR_PHRASES)
 
+    def _resolve_project(self, body: dict) -> str:
+        """
+        Pick the project for this request. Per-model override in
+        model_project_map wins; otherwise fall back to sync_project.
+        """
+        model_id = (body.get("model") or "").strip()
+        if model_id and model_id in self.valves.model_project_map:
+            mapped = self.valves.model_project_map[model_id].strip()
+            if mapped:
+                return mapped
+        return self.valves.sync_project.strip()
+
+    def _no_project_warning(self) -> str:
+        return (
+            "WARNING: no project resolved for this model. "
+            "Add this model to the model_project_map valve, "
+            "or set the sync_project valve as a fallback."
+        )
+
     # ── Git operations ────────────────────────────────────────────────────────
 
-    def _sync_up(self) -> str:
-        project = self.valves.sync_project.strip()
+    def _sync_up(self, project: str) -> str:
         if not project:
-            return "WARNING: sync_project valve is not set. Set it to the project name to sync."
+            return self._no_project_warning()
         try:
             commit_msg = self.valves.sync_commit_message.strip() or (
                 "sync: manual sync-up " + time.strftime("%Y-%m-%d %H:%M")
@@ -230,10 +265,9 @@ class Pipeline:
             log.warning("[sync] sync_up failed: " + str(e))
             return "FAILED: sync up error — " + str(e)
 
-    def _sync_down(self) -> str:
-        project = self.valves.sync_project.strip()
+    def _sync_down(self, project: str) -> str:
         if not project:
-            return "WARNING: sync_project valve is not set. Set it to the project name to sync."
+            return self._no_project_warning()
         try:
             resp = requests.post(
                 self._url("/bible/pull"),
@@ -253,14 +287,13 @@ class Pipeline:
             log.warning("[sync] sync_down failed: " + str(e))
             return "FAILED: sync down error — " + str(e)
 
-    def _sync_pr(self) -> str:
+    def _sync_pr(self, project: str) -> str:
         """
         Create a branch, stage all changes, commit, push, and open a PR via gh CLI
         on the bridge host. The bridge exposes a /bible/pr endpoint for this.
         """
-        project = self.valves.sync_project.strip()
         if not project:
-            return "WARNING: sync_project valve is not set. Set it to the project name."
+            return self._no_project_warning()
         try:
             commit_msg = self.valves.sync_commit_message.strip() or (
                 "sync: " + time.strftime("%Y-%m-%d %H:%M")
@@ -309,8 +342,10 @@ class Pipeline:
             return body
 
         if self._is_sync_up(user_message):
-            log.info("[sync] SYNC UP triggered")
-            result = self._sync_up()
+            project = self._resolve_project(body)
+            log.info("[sync] SYNC UP triggered (model=%s project=%s)",
+                     body.get("model", "?"), project or "(unresolved)")
+            result = self._sync_up(project)
             log.info("[sync] SYNC UP result: " + result)
             messages.append({
                 "role": "system",
@@ -323,8 +358,10 @@ class Pipeline:
             return body
 
         if self._is_sync_down(user_message):
-            log.info("[sync] SYNC DOWN triggered")
-            result = self._sync_down()
+            project = self._resolve_project(body)
+            log.info("[sync] SYNC DOWN triggered (model=%s project=%s)",
+                     body.get("model", "?"), project or "(unresolved)")
+            result = self._sync_down(project)
             log.info("[sync] SYNC DOWN result: " + result)
             messages.append({
                 "role": "system",
@@ -337,8 +374,10 @@ class Pipeline:
             return body
 
         if self._is_sync_pr(user_message):
-            log.info("[sync] SYNC PR triggered")
-            result = self._sync_pr()
+            project = self._resolve_project(body)
+            log.info("[sync] SYNC PR triggered (model=%s project=%s)",
+                     body.get("model", "?"), project or "(unresolved)")
+            result = self._sync_pr(project)
             log.info("[sync] SYNC PR result: " + result)
             messages.append({
                 "role": "system",
