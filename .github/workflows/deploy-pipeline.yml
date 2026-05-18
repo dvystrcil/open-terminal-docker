@@ -1,0 +1,105 @@
+name: Deploy Pipeline to OWUI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'helpers/git_sync_filter.py'
+  workflow_dispatch:
+    inputs:
+      pipeline_path:
+        description: 'Pipeline file (relative to repo root)'
+        required: false
+        default: 'helpers/git_sync_filter.py'
+
+env:
+  PIPELINE_PATH: ${{ github.event.inputs.pipeline_path || 'helpers/git_sync_filter.py' }}
+
+jobs:
+  deploy:
+    runs-on: open-terminal-docker-runner
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v6
+
+      - name: Checkout homelab (for owui-import-pipeline.sh)
+        uses: actions/checkout@v6
+        with:
+          repository: dvystrcil/homelab
+          path: homelab
+          sparse-checkout: bin/owui-import-pipeline.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Fetch secrets from Infisical
+        uses: Infisical/secrets-action@v1.0.16
+        with:
+          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          env-slug: prod
+          project-slug: homelab-bz-gt
+          secret-path: /open-terminal-docker
+          export-type: env
+          domain: http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'latest'
+
+      - name: Configure kubeconfig from Infisical-injected SA token
+        run: |
+          set -euo pipefail
+          test -n "${PIPELINE_DEPLOYER_TOKEN:-}" || {
+            echo "::error::PIPELINE_DEPLOYER_TOKEN not set in Infisical (project homelab-bz-gt path /open-terminal-docker env prod)"
+            exit 1
+          }
+          mkdir -p ~/.kube
+          cat > ~/.kube/config <<EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - name: in-cluster
+            cluster:
+              server: https://kubernetes.default.svc
+              insecure-skip-tls-verify: true
+          contexts:
+          - name: deployer
+            context:
+              cluster: in-cluster
+              user: deployer
+              namespace: open-webui
+          current-context: deployer
+          users:
+          - name: deployer
+            user:
+              token: ${PIPELINE_DEPLOYER_TOKEN}
+          EOF
+          chmod 600 ~/.kube/config
+          kubectl --namespace=open-webui auth can-i get pods
+
+      - name: Import pipeline
+        run: |
+          set -euo pipefail
+          chmod +x homelab/bin/owui-import-pipeline.sh
+          homelab/bin/owui-import-pipeline.sh "$PIPELINE_PATH"
+
+      - name: Verify v1.2 startup banner
+        run: |
+          set -euo pipefail
+          # Allow up to ~60s for the reload to land
+          for i in $(seq 1 12); do
+            if kubectl -n open-webui logs deploy/owui-pipelines --tail=400 \
+                | grep -q "Git Sync Filter starting up"; then
+              echo "::notice::Sync filter startup banner observed"
+              kubectl -n open-webui logs deploy/owui-pipelines --tail=400 \
+                | grep "\[sync\]" | tail -10
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Did not observe sync filter startup banner within 60s"
+          kubectl -n open-webui logs deploy/owui-pipelines --tail=200 | tail -60
+          exit 1
