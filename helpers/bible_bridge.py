@@ -279,7 +279,15 @@ def sync_bible(
         return False, "git commit failed: " + out
     ok, out = git(project_path, "push", GIT_REMOTE, GIT_BRANCH)
     if not ok:
-        return False, "git push failed: " + out
+        # Atomic-or-fail: rollback the local commit so we don't leave main
+        # ahead of origin. Use --soft so the user's changes remain staged
+        # and the next sync attempt can retry without losing work.
+        # (Without this, every push failure leaves a dangling local commit
+        # that future `/bible/pull` runs trip over — see homelab#118 + #122.)
+        rb_ok, rb_out = git(project_path, "reset", "--soft", "HEAD~1")
+        if rb_ok:
+            return False, "git push failed (commit rolled back, changes restaged): " + out
+        return False, "git push failed AND rollback failed — manual recovery needed. push: " + out + " | rollback: " + rb_out
     actor_tag = f" by dvystrcil-{re.sub(r'[^a-z0-9-]', '', actor.lower())}" if actor else ""
     log.info("sync commit+push" + actor_tag + ": " + msg)
     return True, "committed and pushed: '" + msg + "'"
