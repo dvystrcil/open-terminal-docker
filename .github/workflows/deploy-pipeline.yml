@@ -92,17 +92,18 @@ jobs:
 
       - name: Import pipeline
         run: |
-          set -uo pipefail
           chmod +x homelab/bin/owui-import-pipeline.sh
-          homelab/bin/owui-import-pipeline.sh "$PIPELINE_PATH"
-          rc=$?
-          # The script's step 3 spawns a kubectl-run probe pod that curls
-          # the pipelines HTTP API. From inside the cluster the probe-pod
-          # image pull + scheduling regularly exceeds curl --max-time 30,
-          # producing exit 28 *after* step 2 (kubectl cp) has already
-          # landed the file. The Verify step below is the real source of
-          # truth for "did the reload happen?", so a step-3 timeout is a
-          # warning, not a failure. Tracked: TODO file homelab issue.
+          # `&& rc=0 || rc=$?` captures the exit code without tripping
+          # GHA's default `bash -e` shell — which would otherwise abort
+          # this step the instant the script exits non-zero, before our
+          # tolerance branch runs. The script's step 3 spawns a
+          # kubectl-run probe pod that curls the pipelines HTTP API;
+          # from inside the cluster the probe-pod image-pull + schedule
+          # regularly exceeds curl --max-time 30, producing exit 28
+          # *after* step 2 (kubectl cp) has already landed the file.
+          # The Verify step below tails the pod log for the filter
+          # startup banner and is the real source of truth.
+          homelab/bin/owui-import-pipeline.sh "$PIPELINE_PATH" && rc=0 || rc=$?
           if [ "$rc" -eq 28 ]; then
             echo "::warning::Import script exited 28 (probe-pod timeout). File copy completed; Verify step is authoritative."
           elif [ "$rc" -ne 0 ]; then
