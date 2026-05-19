@@ -50,7 +50,7 @@ jobs:
         with:
           repository: dvystrcil/homelab
           path: homelab
-          sparse-checkout: bin/owui-import-pipeline.sh
+          sparse-checkout: bin
           sparse-checkout-cone-mode: false
           token: ${{ steps.app-token.outputs.token }}
 
