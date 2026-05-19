@@ -1,7 +1,7 @@
 """
 title: Git Sync Filter
 author: custom
-version: 1.2
+version: 1.3
 license: MIT
 description: >
   A lightweight filter that adds /sync_up and /sync_down slash commands
@@ -124,10 +124,11 @@ class Pipeline:
             ),
         )
         sync_commit_message: str = Field(
-            default="",
+            default="auto",
             description=(
                 "Custom commit message for /sync_up and /sync_pr. "
-                "Leave empty to use an auto-generated timestamped message."
+                "Set to 'auto' (default) or leave empty to use an "
+                "auto-generated timestamped message."
             ),
         )
         sync_pr_base_branch: str = Field(
@@ -138,22 +139,23 @@ class Pipeline:
             ),
         )
         sync_pr_title: str = Field(
-            default="",
+            default="auto",
             description=(
                 "Default pull request title for /sync_pr. "
-                "Leave empty to use an auto-generated title."
+                "Set to 'auto' (default) or leave empty to use an "
+                "auto-generated title (the commit message)."
             ),
         )
         sync_actor: str = Field(
-            default="",
+            default="auto",
             description=(
                 "Identifier passed to bible_bridge as the `actor` field. "
                 "The bridge uses it to set the commit author "
                 "(dvystrcil-<actor> <actor@dvystrcil.local>) so forensics "
                 "can tell which agent made each commit. Per dvystrcil/"
-                "homelab#125. Leave empty (default) to let the bridge "
-                "fall back to its platform default 'owui'. Override "
-                "per-model: this filter is attached to fiction-writer "
+                "homelab#125. Set to 'auto' (default) or leave empty to "
+                "let the bridge fall back to its platform default 'owui'. "
+                "Override per-model: this filter is attached to fiction-writer "
                 "(set to 'fiction') and dual-model-reasoner-coder-n8n "
                 "(set to 'dmf') for direct attribution."
             ),
@@ -165,7 +167,7 @@ class Pipeline:
         self.valves = self.Valves()
 
     async def on_startup(self):
-        log.info("[sync] Git Sync Filter starting up v1.2")
+        log.info("[sync] Git Sync Filter starting up v1.3")
         log.info(f"[sync] Bridge: {self.valves.bridge_url}")
         log.info(f"[sync] Fallback project: {self.valves.sync_project or '(unset)'}")
         if self.valves.model_project_map:
@@ -215,6 +217,22 @@ class Pipeline:
         lower = message.lower().strip()
         return any(lower.startswith(p) or lower == p.strip() for p in SYNC_PR_PHRASES)
 
+    # ── Sentinel-aware valve resolution ──────────────────────────────────────
+    # OWUI's admin UI rejects literally-empty string valves on save. To keep
+    # the schema "empty means use the default" while satisfying the UI, three
+    # valves (sync_commit_message, sync_pr_title, sync_actor) accept "auto"
+    # as a sentinel that the runtime treats identically to "". See
+    # dvystrcil/open-terminal-docker#34.
+    _SENTINEL_EMPTY = ("auto",)
+
+    @classmethod
+    def _valve_value(cls, raw: str) -> str:
+        """Return the valve's effective value; '' if raw is empty or sentinel."""
+        stripped = (raw or "").strip()
+        if stripped.lower() in cls._SENTINEL_EMPTY:
+            return ""
+        return stripped
+
     def _resolve_project(self, body: dict) -> str:
         """
         Pick the project for this request. Per-model override in
@@ -240,11 +258,11 @@ class Pipeline:
         if not project:
             return self._no_project_warning()
         try:
-            commit_msg = self.valves.sync_commit_message.strip() or (
+            commit_msg = self._valve_value(self.valves.sync_commit_message) or (
                 "sync: manual sync-up " + time.strftime("%Y-%m-%d %H:%M")
             )
             payload = {"project": project, "commit_message": commit_msg}
-            actor = self.valves.sync_actor.strip()
+            actor = self._valve_value(self.valves.sync_actor)
             if actor:
                 payload["actor"] = actor
             resp = requests.post(
@@ -295,10 +313,10 @@ class Pipeline:
         if not project:
             return self._no_project_warning()
         try:
-            commit_msg = self.valves.sync_commit_message.strip() or (
+            commit_msg = self._valve_value(self.valves.sync_commit_message) or (
                 "sync: " + time.strftime("%Y-%m-%d %H:%M")
             )
-            pr_title = self.valves.sync_pr_title.strip() or commit_msg
+            pr_title = self._valve_value(self.valves.sync_pr_title) or commit_msg
             branch = "fwf/" + time.strftime("%Y%m%d-%H%M%S")
             payload = {
                 "project": project,
@@ -307,7 +325,7 @@ class Pipeline:
                 "pr_title": pr_title,
                 "base_branch": self.valves.sync_pr_base_branch,
             }
-            actor = self.valves.sync_actor.strip()
+            actor = self._valve_value(self.valves.sync_actor)
             if actor:
                 payload["actor"] = actor
             resp = requests.post(
