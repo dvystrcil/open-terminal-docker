@@ -352,6 +352,36 @@ class Pipeline:
 
     # ── Filter entrypoints ────────────────────────────────────────────────────
 
+    @staticmethod
+    def _inject_filter_result(messages: list, command: str, result: str) -> None:
+        """Append a system message wrapping the filter result in a marker tag.
+
+        The marker tag exists because qwen3.6:35b (and likely others) was
+        observed treating the bare 'SUCCESS: <project> synced down' text
+        as user-pasted input rather than an authoritative result, then
+        looping into 20K of reasoning trying to "really" do the git work
+        itself. The <filter-result> wrapper gives the model a hard
+        pattern to recognise. The wording below is intentionally
+        emphatic — short sentences, no hedging.
+        """
+        messages.append({
+            "role": "system",
+            "content": (
+                f"The git_sync_filter intercepted the user's {command} "
+                f"command and has ALREADY completed the git operation. "
+                f"The work is DONE. Do NOT call run_command, run any git "
+                f"commands, search for credential files, or attempt to "
+                f"re-do the work in any directory. The result below is "
+                f"authoritative — report it to the user in ONE short "
+                f"sentence (e.g. \"Pulled latest changes.\") and stop. "
+                f"Do not paraphrase the result body; if the user wants "
+                f"detail they can read it themselves.\n\n"
+                f"<filter-result command=\"{command}\">\n"
+                f"{result}\n"
+                f"</filter-result>"
+            )
+        })
+
     async def inlet(self, body: dict, user: Optional[dict] = None) -> dict:
         messages = body.get("messages", [])
         user_message = self._get_last_user_message(messages)
@@ -365,13 +395,7 @@ class Pipeline:
                      body.get("model", "?"), project or "(unresolved)")
             result = self._sync_up(project)
             log.info("[sync] SYNC UP result: " + result)
-            messages.append({
-                "role": "system",
-                "content": (
-                    "The user ran /sync_up. Report this result to the user "
-                    "exactly as written and nothing else:\n\n" + result
-                )
-            })
+            self._inject_filter_result(messages, "/sync_up", result)
             body["messages"] = messages
             return body
 
@@ -381,13 +405,7 @@ class Pipeline:
                      body.get("model", "?"), project or "(unresolved)")
             result = self._sync_down(project)
             log.info("[sync] SYNC DOWN result: " + result)
-            messages.append({
-                "role": "system",
-                "content": (
-                    "The user ran /sync_down. Report this result to the user "
-                    "exactly as written and nothing else:\n\n" + result
-                )
-            })
+            self._inject_filter_result(messages, "/sync_down", result)
             body["messages"] = messages
             return body
 
@@ -397,13 +415,7 @@ class Pipeline:
                      body.get("model", "?"), project or "(unresolved)")
             result = self._sync_pr(project)
             log.info("[sync] SYNC PR result: " + result)
-            messages.append({
-                "role": "system",
-                "content": (
-                    "The user ran /sync_pr. Report this result to the user "
-                    "exactly as written and nothing else:\n\n" + result
-                )
-            })
+            self._inject_filter_result(messages, "/sync_pr", result)
             body["messages"] = messages
             return body
 
