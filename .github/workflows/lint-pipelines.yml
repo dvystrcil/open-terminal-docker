@@ -1,0 +1,29 @@
+# AC6 of open-webui#67. Pipeline-async lint via the shared composite
+# action — flags sync requests.X / psycopg2.X calls inside `async def`
+# bodies not wrapped in asyncio.to_thread / loop.run_in_executor.
+#
+# Scope: helpers/ (where git_sync_filter.py + bible_bridge.py live).
+
+name: lint-pipelines
+
+on:
+  pull_request:
+    paths:
+      - 'helpers/**/*.py'
+      - '.github/workflows/lint-pipelines.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'helpers/**/*.py'
+      - '.github/workflows/lint-pipelines.yml'
+
+jobs:
+  lint:
+    runs-on: open-terminal-docker-runner
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dvystrcil/pipeline-lint-action@v0.1.0
+        with:
+          paths: helpers
