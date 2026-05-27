@@ -1,7 +1,7 @@
 """
 title: Git Sync Filter
 author: custom
-version: 1.3
+version: 1.4
 license: MIT
 description: >
   A lightweight filter that adds /sync_up and /sync_down slash commands
@@ -34,9 +34,14 @@ description: >
     /sync_down → "sync down: pull latest changes from GitHub"
     /sync_pr   → "sync pr: create a branch, commit, and open a pull request"
 
+  v1.4 (open-webui#67): wrap sync requests.post calls in asyncio.to_thread
+        so /sync_* commands don't freeze the uvicorn event loop while the
+        bridge is processing. Same fix class as memory_saver v0.4.0.
+
 requirements: requests
 """
 
+import asyncio
 import logging
 import time
 import threading
@@ -167,7 +172,7 @@ class Pipeline:
         self.valves = self.Valves()
 
     async def on_startup(self):
-        log.info("[sync] Git Sync Filter starting up v1.3")
+        log.info("[sync] Git Sync Filter starting up v1.4")
         log.info(f"[sync] Bridge: {self.valves.bridge_url}")
         log.info(f"[sync] Fallback project: {self.valves.sync_project or '(unset)'}")
         if self.valves.model_project_map:
@@ -389,11 +394,16 @@ class Pipeline:
         if self._is_internal(user_message):
             return body
 
+        # Each _sync_* calls bridge via blocking requests.post (up to
+        # bridge_timeout_seconds, default 120s). Wrap in asyncio.to_thread
+        # so /sync_* commands don't freeze the uvicorn event loop while
+        # the bridge processes (open-webui#67). Same pattern as
+        # memory_saver_postgres v0.4.0.
         if self._is_sync_up(user_message):
             project = self._resolve_project(body)
             log.info("[sync] SYNC UP triggered (model=%s project=%s)",
                      body.get("model", "?"), project or "(unresolved)")
-            result = self._sync_up(project)
+            result = await asyncio.to_thread(self._sync_up, project)
             log.info("[sync] SYNC UP result: " + result)
             self._inject_filter_result(messages, "/sync_up", result)
             body["messages"] = messages
@@ -403,7 +413,7 @@ class Pipeline:
             project = self._resolve_project(body)
             log.info("[sync] SYNC DOWN triggered (model=%s project=%s)",
                      body.get("model", "?"), project or "(unresolved)")
-            result = self._sync_down(project)
+            result = await asyncio.to_thread(self._sync_down, project)
             log.info("[sync] SYNC DOWN result: " + result)
             self._inject_filter_result(messages, "/sync_down", result)
             body["messages"] = messages
@@ -413,7 +423,7 @@ class Pipeline:
             project = self._resolve_project(body)
             log.info("[sync] SYNC PR triggered (model=%s project=%s)",
                      body.get("model", "?"), project or "(unresolved)")
-            result = self._sync_pr(project)
+            result = await asyncio.to_thread(self._sync_pr, project)
             log.info("[sync] SYNC PR result: " + result)
             self._inject_filter_result(messages, "/sync_pr", result)
             body["messages"] = messages
