@@ -1,0 +1,59 @@
+# AC6 of open-webui#67. Fails the PR if any pipeline file under helpers/
+# has a direct sync `requests.X()` or `psycopg2.X()` call inside an
+# `async def` body without being wrapped in `asyncio.to_thread` /
+# `loop.run_in_executor`. Catches the wedge pattern from open-webui#41
+# at PR-review time so it doesn't reach the cluster.
+#
+# Lint script: scripts/lint_pipeline_async.py (AST-based, ~150 LoC).
+# Mirrored from dvystrcil/open-webui — keep in sync if the rule evolves.
+#
+# This repo's OWUI filter is helpers/git_sync_filter.py (the rest of
+# helpers/ is the bible_bridge server + github_app_token helper, but
+# they're also Python and the async-correctness rule applies to any
+# `async def` in them too).
+
+name: lint-pipelines
+
+on:
+  pull_request:
+    paths:
+      - 'helpers/**/*.py'
+      - 'scripts/lint_pipeline_async.py'
+      - '.github/workflows/lint-pipelines.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'helpers/**/*.py'
+      - 'scripts/lint_pipeline_async.py'
+      - '.github/workflows/lint-pipelines.yml'
+
+jobs:
+  lint:
+    runs-on: open-terminal-docker-runner
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Lint pipeline files for async-correctness
+        run: |
+          mapfile -t files < <(find helpers -name '*.py' \
+            -not -name 'test_*.py' \
+            -not -name 'conftest.py' \
+            | sort)
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "no pipeline files to lint"
+            exit 0
+          fi
+
+          echo "Linting ${#files[@]} pipeline file(s):"
+          printf '  %s\n' "${files[@]}"
+          echo
+
+          python3 scripts/lint_pipeline_async.py "${files[@]}"
