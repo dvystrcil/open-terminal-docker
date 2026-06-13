@@ -93,25 +93,23 @@ jobs:
       - name: Import pipeline
         run: |
           chmod +x homelab/bin/owui-import-pipeline.sh
-          # `&& rc=0 || rc=$?` captures the exit code without tripping
-          # GHA's default `bash -e` shell — which would otherwise abort
-          # this step the instant the script exits non-zero, before our
-          # tolerance branch runs. The script's step 3 spawns a
-          # kubectl-run probe pod that curls the pipelines HTTP API;
-          # from inside the cluster the probe-pod image-pull + schedule
-          # + transient DNS produces curl-network errors *after* step 2
-          # (kubectl cp) has already landed the file. The Verify step
-          # below tails the pod log for the filter startup banner and
-          # is the real source of truth.
+          # --no-verify skips the script's step 3 LIST probe (the
+          # structurally flaky in-cluster curl-network failure path — see
+          # project_owui_import_pipeline_step3_flaky). The case statement
+          # below stays as defense-in-depth: the script's reload probe
+          # is still spawned (wrapped in `|| true` there), and any future
+          # probe-pod path that bubbles a curl-network exit still gets
+          # warn-not-fail-ed rather than failing the workflow. The Verify
+          # step below tails the pod log for the filter startup banner
+          # and is the authoritative source of truth. Flag added in
+          # dvystrcil/homelab#337.
           #
-          # Codes covered:
+          # Defense-in-depth case statement covers curl-network errors:
           #   5  = curl couldn't resolve proxy
           #   6  = curl couldn't resolve host
           #   7  = curl failed to connect
           #   28 = curl operation timeout
-          #
-          # Tracked: project_owui_import_pipeline_step3_flaky.
-          homelab/bin/owui-import-pipeline.sh "$PIPELINE_PATH" && rc=0 || rc=$?
+          homelab/bin/owui-import-pipeline.sh --no-verify "$PIPELINE_PATH" && rc=0 || rc=$?
           case "$rc" in
             0) ;;
             5|6|7|28)
