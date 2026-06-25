@@ -23,7 +23,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dvystrcil/pipeline-lint-action@v0.1.0
         with:
           paths: helpers
