@@ -113,6 +113,18 @@ COPY entrypoint.sh /app/entrypoint.sh
 COPY helpers/ /app/helpers/
 RUN chmod +x /app/entrypoint.sh
 
+# Make GH_TOKEN reach NON-interactive sandbox shells. The command executor runs
+# agent commands as `sudo -u <user> -- bash -c ...` — a non-login shell that
+# never sources /etc/profile.d, and sudo strips the parent env. BASH_ENV makes
+# bash source our profile (GH_TOKEN/GITHUB_TOKEN export + gh() wrapper) on every
+# non-interactive start; the sudoers drop-in lets BASH_ENV survive `sudo -u`.
+# entrypoint.sh writes the profile at runtime, so the path is valid by the time
+# any command runs (bash tolerates an absent BASH_ENV file regardless). See #47.
+ENV BASH_ENV=/etc/profile.d/open-terminal.sh
+COPY sudoers.d/open-terminal-env /etc/sudoers.d/open-terminal-env
+RUN chmod 0440 /etc/sudoers.d/open-terminal-env \
+    && visudo -cf /etc/sudoers.d/open-terminal-env
+
 USER user
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/app/entrypoint.sh"]
