@@ -1,0 +1,10 @@
+# Preserve BASH_ENV across `sudo -u <user>`.
+#
+# The open_terminal command executor runs agent commands as
+# `sudo -u <sandbox-user> -- bash -c <cmd>` — a non-login, non-interactive
+# shell that never sources /etc/profile.d. We point BASH_ENV at
+# /etc/profile.d/open-terminal.sh (see Dockerfile) so that bash sources it and
+# exports GH_TOKEN/GITHUB_TOKEN (+ the gh() wrapper); sudo strips BASH_ENV by
+# default, so keep it. Without this the sandboxed shell has no GitHub auth.
+# See open-terminal-docker#47.
+Defaults env_keep += "BASH_ENV"

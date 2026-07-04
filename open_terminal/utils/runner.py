@@ -25,25 +25,6 @@ except ImportError:
     _WINPTY_AVAILABLE = False
 
 
-# Sourced inside the sudo shell before every isolated command so GH_TOKEN /
-# GITHUB_TOKEN (and the gh() wrapper) are set as the sandbox user. A non-login
-# `bash -c` never sources /etc/profile.d and `sudo -u` strips the parent env, so
-# without this the sandboxed shell has no GitHub auth (open-terminal-docker#47).
-PROFILE_SCRIPT = "/etc/profile.d/open-terminal.sh"
-
-
-def _build_isolated_command(command: str, cwd: str | None, run_as_user: str) -> str:
-    """Build the `sudo -u <user> -- bash -c <inner>` string PtyRunner spawns.
-
-    `inner` sources the open-terminal profile first (non-fatal if absent, e.g. a
-    dev/test image) so the GitHub-token exports run AS the sandbox user — which
-    can read the token file — and then runs the original `cd <cwd> && <command>`
-    (short-circuit preserved: a failed chdir still prevents the command)."""
-    inner = f"cd {shlex.quote(cwd)} && {command}" if cwd else command
-    inner = f". {PROFILE_SCRIPT} 2>/dev/null || true; {inner}"
-    return f"sudo -u {shlex.quote(run_as_user)} -- bash -c {shlex.quote(inner)}"
-
-
 class ProcessRunner(ABC):
     """Unified interface for running a subprocess via PTY or pipes."""
 
@@ -78,7 +59,9 @@ class PtyRunner(ProcessRunner):
 
     def __init__(self, command: str, cwd: str | None, env: dict | None, run_as_user: str | None = None):
         if run_as_user:
-            command = _build_isolated_command(command, cwd, run_as_user)
+            # Build the inner command: optionally cd first, then run the command.
+            inner = f"cd {shlex.quote(cwd)} && {command}" if cwd else command
+            command = f"sudo -u {shlex.quote(run_as_user)} -- bash -c {shlex.quote(inner)}"
             cwd = None  # Popen runs as parent user — can't chdir into chmod 700 dirs
         master_fd, slave_fd = pty.openpty()
         try:
