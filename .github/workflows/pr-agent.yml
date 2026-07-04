@@ -25,6 +25,11 @@ jobs:
           CONFIG.MODEL_WEAK: "ollama/qwen3.6:35b"
           CONFIG.FALLBACK_MODELS: '["ollama/qwen3.6:35b"]'
           CONFIG.CUSTOM_MODEL_MAX_TOKENS: "32768"
+          # litellm default is 120s; the larger `improve` (code-suggestions)
+          # call on the local 35b — especially cold — exceeds it and posts
+          # "Failed to generate code suggestions" (review/describe are smaller
+          # and finish in time). 300s covers a cold-load + long generation.
+          CONFIG.AI_TIMEOUT: "300"
           CONFIG.DUPLICATE_PROMPT_EXAMPLES: "true"
           OLLAMA.API_BASE: "http://ollama.ollama.svc.cluster.local"
           PR_REVIEWER.REQUIRE_TESTS_REVIEW: "false"
