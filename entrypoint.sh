@@ -74,6 +74,16 @@ if [ -n "${GITHUB_APP_ID:-}" ] && \
         done
     ) &
     echo "GitHub App: refresh loop started (PID $!)"
+elif [ -n "${GH_TOKEN:-}" ]; then
+    # Static PAT path (homelab#709 — the App refresh loop above showed a
+    # confirmed intermittent gap: a live `gh` call got HTTP 401 mid-cycle
+    # despite the refresh appearing to succeed). No refresh loop needed,
+    # but the credential helper below only ever reads from disk, never
+    # from an env var — write it once so `git push`/`pull` keep working.
+    echo "$GH_TOKEN" > /tmp/github_token
+    chmod 600 /tmp/github_token
+    export GITHUB_TOKEN="$GH_TOKEN"
+    echo "Static GH_TOKEN: written to /tmp/github_token"
 fi
 
 # Install a git credential helper that reads the current token from disk at
