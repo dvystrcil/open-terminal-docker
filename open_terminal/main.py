@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_NOTEBOOKS, ENABLE_SYSTEM_PROMPT, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, LOG_DIR, MAX_TERMINAL_SESSIONS, MULTI_USER, OPEN_TERMINAL_INFO, PROCESS_EXPIRY, PROCESS_LOG_RETENTION, PROCESS_UNDELIVERED_EXPIRY, SYSTEM_PROMPT, TERMINAL_TERM
 from open_terminal.utils.runner import PipeRunner, ProcessRunner, create_runner
 from open_terminal.utils.fs import UserFS
+from open_terminal.utils.github_token import refresh_github_token_env
 
 if MULTI_USER:
     from open_terminal.utils.user_isolation import check_environment, resolve_user
@@ -1362,6 +1363,7 @@ async def execute(
     fs = get_filesystem(http_request)
     cwd = fs.resolve_path(request.cwd) if request.cwd else (fs.home if fs.username else None)
 
+    refresh_github_token_env()
     subprocess_env = {**os.environ, **request.env} if request.env else None
     runner = await create_runner(
         request.command, cwd, subprocess_env, run_as_user=fs.username
@@ -1759,6 +1761,7 @@ if ENABLE_TERMINAL:
                     shell_cmd = [os.environ.get("SHELL", "/bin/sh")]
                     cwd = os.getcwd()
 
+                refresh_github_token_env()
                 spawn_env = os.environ.copy()
                 spawn_env.setdefault("TERM", TERMINAL_TERM)
                 process = subprocess.Popen(
