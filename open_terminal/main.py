@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_NOTEBOOKS, ENABLE_SYSTEM_PROMPT, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, LOG_DIR, MAX_TERMINAL_SESSIONS, MULTI_USER, OPEN_TERMINAL_INFO, PROCESS_LOG_RETENTION, SYSTEM_PROMPT, TERMINAL_TERM
+from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_NOTEBOOKS, ENABLE_SYSTEM_PROMPT, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, LOG_DIR, MAX_TERMINAL_SESSIONS, MULTI_USER, OPEN_TERMINAL_INFO, PROCESS_EXPIRY, PROCESS_LOG_RETENTION, PROCESS_UNDELIVERED_EXPIRY, SYSTEM_PROMPT, TERMINAL_TERM
 from open_terminal.utils.runner import PipeRunner, ProcessRunner, create_runner
 from open_terminal.utils.fs import UserFS
 
@@ -329,11 +329,11 @@ class BackgroundProcess:
     exit_code: Optional[int] = None
     log_task: Optional[asyncio.Task] = field(default=None, repr=False)
     finished_at: Optional[float] = field(default=None, repr=False)
+    delivered_at: Optional[float] = field(default=None, repr=False)
     log_path: Optional[str] = field(default=None, repr=False)
 
 
 _processes: dict[str, BackgroundProcess] = {}
-_EXPIRY_SECONDS = 300  # auto-clean finished processes after 5 min
 
 
 from open_terminal.utils.log import log_process, read_log
@@ -344,15 +344,26 @@ from open_terminal.utils.log import log_process, read_log
 def _cleanup_expired():
     """Remove finished processes that have expired.
 
+    Two different grace periods (homelab#391 / open-terminal#13): a
+    process whose finished status has been successfully delivered to a
+    caller at least once only needs PROCESS_EXPIRY (short -- the caller
+    already has the result). A process nobody has successfully polled
+    yet gets PROCESS_UNDELIVERED_EXPIRY instead (much longer), so a
+    caller whose own dispatch loop stalls doesn't come back to find its
+    result already gone.
+
     Also deletes log files older than *LOG_RETENTION_SECONDS*.
     """
     now = time.time()
-    expired = [
-        process_id
-        for process_id, background_process in _processes.items()
-        if background_process.finished_at
-        and now - background_process.finished_at > _EXPIRY_SECONDS
-    ]
+    expired = []
+    for process_id, background_process in _processes.items():
+        if not background_process.finished_at:
+            continue
+        if background_process.delivered_at is not None:
+            if now - background_process.delivered_at > PROCESS_EXPIRY:
+                expired.append(process_id)
+        elif now - background_process.finished_at > PROCESS_UNDELIVERED_EXPIRY:
+            expired.append(process_id)
     for process_id in expired:
         bp = _processes.pop(process_id)
         # Delete the log file if it has exceeded the retention period.
@@ -1435,6 +1446,12 @@ async def get_status(
     output, next_offset, truncated = await read_log(
         background_process.log_path, offset=offset, tail=tail
     )
+
+    if background_process.status != "running" and background_process.delivered_at is None:
+        # First successful read of a finished process's status -- from
+        # here on the short PROCESS_EXPIRY grace period applies instead
+        # of PROCESS_UNDELIVERED_EXPIRY (open-terminal#13).
+        background_process.delivered_at = time.time()
 
     return {
         "id": background_process.id,
