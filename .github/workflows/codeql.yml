@@ -11,7 +11,17 @@ on:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    runs-on: open-terminal-docker-runner
+    # GitHub-hosted, not the open-terminal-docker ARC runner: this job only
+    # checks out code and statically analyzes workflow YAML, no in-cluster
+    # access needed. The ARC runner's `runner` container is capped at 512Mi
+    # (homelab#557 sizing, shared across 7+ repos' ApplicationSet template) --
+    # too tight for CodeQL, which reserves substantial fixed overhead
+    # internally regardless of an explicit `ram:` input (tried ram: 400 /
+    # threads: 1; still "Evaluator heap must be at least 384.00 MiB", so this
+    # isn't a tunable-within-512Mi problem). Public repos get free
+    # GitHub-hosted minutes, so this sidesteps the shared-runner-sizing
+    # tradeoff entirely rather than bumping memory for every repo on it.
+    runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read
