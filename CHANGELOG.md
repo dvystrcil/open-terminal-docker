@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- 🔌 **`Connection reset by peer` on Open WebUI tool calls** — uvicorn's default keep-alive timeout (5s) was shorter than the connection-pool reuse window on the Open WebUI client side, so an idle-but-pooled connection would get written to after the server had already closed it, surfacing as `ConnectionResetError` even though the underlying command had completed successfully. `timeout_keep_alive` is now configurable (`OPEN_TERMINAL_UVICORN_TIMEOUT_KEEP_ALIVE` or `uvicorn_timeout_keep_alive` in config.toml) and defaults to 75s. ([homelab#709](https://github.com/dvystrcil/homelab/issues/709))
+
 ## [0.11.30] - 2026-03-25
 
 ### Changed
