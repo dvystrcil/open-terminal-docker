@@ -182,6 +182,16 @@ UVICORN_LOOP = os.environ.get(
     config.get("uvicorn_loop", "auto"),
 )
 
+# uvicorn's own default keep-alive is 5s. Open WebUI's aiohttp client pools
+# connections for reuse well beyond that, so on an idle gap it writes to a
+# socket the server already closed, surfacing as
+# "[Errno 104] Connection reset by peer" on the OWUI side even though the
+# request that raced it completed successfully (homelab#709).
+UVICORN_TIMEOUT_KEEP_ALIVE = int(os.environ.get(
+    "OPEN_TERMINAL_UVICORN_TIMEOUT_KEEP_ALIVE",
+    config.get("uvicorn_timeout_keep_alive", 75),
+))
+
 OPEN_TERMINAL_INFO = os.environ.get(
     "OPEN_TERMINAL_INFO",
     config.get("info", ""),
