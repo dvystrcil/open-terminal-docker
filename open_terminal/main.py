@@ -379,6 +379,57 @@ def _cleanup_expired():
                 pass
 
 
+_log_sweep_task: "asyncio.Task | None" = None
+
+
+def _sweep_expired_log_files(processes_dir: str, now: float | None = None) -> list[str]:
+    """Delete *.jsonl files in processes_dir older than PROCESS_LOG_RETENTION.
+
+    Complements _cleanup_expired() above, which only deletes a log file
+    when it *also* has a matching in-memory BackgroundProcess record --
+    but _processes is in-memory and doesn't survive a pod restart, while
+    the log files live on a persistent volume that does. Any log file
+    older than the last restart is therefore permanently unreachable by
+    that path regardless of age. Surfaced via homelab#720: a process log
+    from ~2 months prior was still present, containing a plaintext
+    GITHUB_APP_PRIVATE_KEY from a command that had echoed it, because
+    every restart since had reset _processes to empty. This reads mtimes
+    directly off disk instead, independent of any process record.
+
+    Returns the list of paths actually deleted (for tests/observability).
+    """
+    now = time.time() if now is None else now
+    deleted = []
+    try:
+        entries = os.listdir(processes_dir)
+    except OSError:
+        return deleted
+    for name in entries:
+        if not name.endswith(".jsonl"):
+            continue
+        path = os.path.join(processes_dir, name)
+        try:
+            if now - os.path.getmtime(path) > PROCESS_LOG_RETENTION:
+                os.remove(path)
+                deleted.append(path)
+        except OSError:
+            pass
+    return deleted
+
+
+async def _log_retention_sweep_loop():
+    processes_dir = os.path.join(LOG_DIR, "processes")
+    while True:
+        await asyncio.sleep(3600)  # hourly is plenty for a multi-day window
+        _sweep_expired_log_files(processes_dir)
+
+
+@app.on_event("startup")
+async def _start_log_retention_sweep():
+    global _log_sweep_task
+    _log_sweep_task = asyncio.create_task(_log_retention_sweep_loop())
+
+
 def _get_process(process_id: str) -> BackgroundProcess:
     _cleanup_expired()
     background_process = _processes.get(process_id)
