@@ -29,6 +29,16 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           queries: security-and-quality
+          # The ARC runner container (not the dind sidecar) is capped at
+          # 512Mi (homelab#557 sizing). codeql-action auto-detects the
+          # *host's* total RAM rather than the cgroup limit and plans an
+          # evaluator heap far beyond what the container can actually get,
+          # which trips "Evaluator heap must be at least 384.00 MiB" once
+          # the real cgroup ceiling kicks in. Cap explicitly so CodeQL
+          # plans within what's actually available; threads: 1 avoids
+          # multiplying that budget across parallel evaluators.
+          ram: 400
+          threads: 1
 
       - uses: github/codeql-action/analyze@v4
         with:
