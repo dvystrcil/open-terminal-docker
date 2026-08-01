@@ -16,6 +16,22 @@ jobs:
       contents: write
 
     steps:
+      # Resolve the exact commit this release's tag points to. Do NOT
+      # trust dev-amd64/dev-arm64 (floating tags docker.yml's build job
+      # overwrites on every push) to still reflect this commit by the
+      # time this job runs -- a later commit's build can race ahead and
+      # overwrite them first, silently promoting the WRONG code under
+      # this release's version tag. See homelab#822.
+      - name: Resolve release commit SHA
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 1
+
+      - name: Record resolved SHA
+        id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Fetch secrets from Infisical
         uses: Infisical/secrets-action@v1.0.16
         with:
@@ -50,15 +66,20 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      # Retag dev-amd64/dev-arm64 → semver + latest — no rebuild
-      - name: Promote dev image to release tags
+      # Retag the exact commit's sha-<sha>-{amd64,arm64} images -> semver +
+      # latest -- no rebuild. Pinned to steps.sha.outputs.sha (the release
+      # tag's actual commit), NOT the floating dev-amd64/dev-arm64 tags,
+      # which a later commit's build job may have already overwritten by
+      # the time this job runs.
+      - name: Promote release commit's images to release tags
         env:
           DOCKER_CLI_EXPERIMENTAL: enabled
+          RELEASE_SHA: ${{ steps.sha.outputs.sha }}
         run: |
           for TAG in $(jq -cr '[.tags[]] | unique | .[]' <<< "$DOCKER_METADATA_OUTPUT_JSON"); do
             docker manifest create "$TAG" \
-              ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:dev-amd64 \
-              ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:dev-arm64
+              ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:sha-${RELEASE_SHA}-amd64 \
+              ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:sha-${RELEASE_SHA}-arm64
             docker manifest push "$TAG"
           done
 

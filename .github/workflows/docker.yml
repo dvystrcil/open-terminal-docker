@@ -79,7 +79,18 @@ jobs:
           provenance: false
           build-args: |
             FORK_SHA=${{ steps.fork.outputs.sha }}
-          tags: ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:${{ matrix.platform == 'linux/amd64' && 'dev-amd64' || 'dev-arm64' }}
+          # homelab#822: dev-amd64/dev-arm64 are floating tags that
+          # every push overwrites. release.yml's promote job used to
+          # retag whichever images those floating tags currently
+          # pointed to at release-creation time -- if a second commit's
+          # build job overwrote them before the first commit's release
+          # had been promoted, the release ended up shipping the WRONG
+          # commit's code with no error anywhere. Also push an immutable
+          # per-commit-per-platform tag so promote can pin to the exact
+          # commit being released instead of racing the floating tags.
+          tags: |
+            ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:${{ matrix.platform == 'linux/amd64' && 'dev-amd64' || 'dev-arm64' }}
+            ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
           cache-from: type=registry,ref=${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
           cache-to: type=registry,ref=${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }},mode=max
 
