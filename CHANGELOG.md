@@ -6,10 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.20.41] - 2026-07-31
+
+### Fixed
+
+- 🔒 **Process log retention never actually pruned old files** — `_cleanup_expired()`'s log-file deletion only ran when a log file *also* had a matching in-memory `BackgroundProcess` record, but that registry is in-memory and doesn't survive a pod restart, while the log files live on a persistent volume that does. Any log file older than the last restart was therefore permanently unreachable by that path regardless of age — confirmed live: a ~2-month-old process log was still present and contained a plaintext leaked `GITHUB_APP_PRIVATE_KEY` from a command that had echoed it. A new hourly sweep now reads file mtimes directly off disk and deletes anything past `PROCESS_LOG_RETENTION`, independent of any in-memory record. ([homelab#720](https://github.com/dvystrcil/homelab/issues/720))
+
+## [0.20.40] - 2026-07-31
+
 ### Fixed
 
 - 🔌 **`Connection reset by peer` on Open WebUI tool calls** — uvicorn's default keep-alive timeout (5s) was shorter than the connection-pool reuse window on the Open WebUI client side, so an idle-but-pooled connection would get written to after the server had already closed it, surfacing as `ConnectionResetError` even though the underlying command had completed successfully. `timeout_keep_alive` is now configurable (`OPEN_TERMINAL_UVICORN_TIMEOUT_KEEP_ALIVE` or `uvicorn_timeout_keep_alive` in config.toml) and defaults to 75s. ([homelab#709](https://github.com/dvystrcil/homelab/issues/709))
-- 🔒 **Process log retention never actually pruned old files** — `_cleanup_expired()`'s log-file deletion only ran when a log file *also* had a matching in-memory `BackgroundProcess` record, but that registry is in-memory and doesn't survive a pod restart, while the log files live on a persistent volume that does. Any log file older than the last restart was therefore permanently unreachable by that path regardless of age — confirmed live: a ~2-month-old process log was still present and contained a plaintext leaked `GITHUB_APP_PRIVATE_KEY` from a command that had echoed it. A new hourly sweep now reads file mtimes directly off disk and deletes anything past `PROCESS_LOG_RETENTION`, independent of any in-memory record. ([homelab#720](https://github.com/dvystrcil/homelab/issues/720))
 
 ## [0.11.30] - 2026-03-25
 
