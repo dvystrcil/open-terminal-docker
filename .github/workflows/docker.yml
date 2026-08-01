@@ -54,6 +54,21 @@ jobs:
             [registry."harbor-core.harbor.svc.cluster.local"]
               ca=["/etc/ssl/certs/ca-certificates.crt"]
 
+      # TEMPORARY, tied to the same fork-build stage in the Dockerfile
+      # (see homelab#822) -- remove once the fork's fixes land upstream
+      # and Dockerfile stage 1 reverts to a plain upstream FROM.
+      # Resolves the fork's CURRENT commit so it's passed as a build-arg
+      # below: Docker's cache keys on RUN command text, not on what a
+      # `git clone --branch main` actually fetches, so without this the
+      # fork-build layer can silently stay cached and stale across runs
+      # even after the fork gets new commits.
+      - name: Resolve open-terminal-app-fork HEAD sha
+        id: fork
+        run: |
+          sha=$(git ls-remote https://github.com/dvystrcil/open-terminal-app-fork.git refs/heads/main | cut -f1)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Building against fork main @ $sha"
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -62,6 +77,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           provenance: false
+          build-args: |
+            FORK_SHA=${{ steps.fork.outputs.sha }}
           tags: ${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:${{ matrix.platform == 'linux/amd64' && 'dev-amd64' || 'dev-arm64' }}
           cache-from: type=registry,ref=${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
           cache-to: type=registry,ref=${{ env.INTERNAL_REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }},mode=max

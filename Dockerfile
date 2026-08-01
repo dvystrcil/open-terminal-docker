@@ -1,6 +1,99 @@
-# Wrapper image — extends ghcr.io/open-webui/open-terminal with
-# additional tools and environment configuration.
-FROM harbor-core.harbor.svc.cluster.local/ghcr-proxy/open-webui/open-terminal:latest
+# === STAGE 1: build open_terminal from our fork, not upstream :latest ===
+#
+# TEMPORARY. dvystrcil/open-terminal-app-fork carries fixes not yet in
+# upstream open-webui/open-terminal, submitted as:
+#   - open-webui/open-terminal#148 -- configurable uvicorn keep-alive
+#     timeout (fixes intermittent ConnectionResetError)
+#   - open-webui/open-terminal#149 -- process-log retention security fix
+#     (a log file with no in-memory record was never pruned)
+#   - open-webui/open-terminal#150 -- two-tier process-result expiry
+#     (a slow caller could lose a finished command's result forever)
+#   - open-webui/open-terminal#151 -- insert_after/append_to_section/
+#     append endpoints + a defensive replace_file_content check
+# Plus one homelab-specific commit NOT submitted upstream (GH_TOKEN
+# refresh from disk before every subprocess spawn -- ties into our own
+# entrypoint.sh token-rotation convention, not something upstream has
+# any hook for).
+#
+# Once all four upstream PRs merge and a release picks them up, revert
+# this stage and go back to a plain
+# `FROM harbor-core.../ghcr-proxy/open-webui/open-terminal:latest`
+# (see homelab#822). Mirrors upstream's own Dockerfile build steps
+# exactly, substituting a git clone of our fork for `COPY . .`.
+FROM python:3.12.13 AS fork-build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        coreutils findutils grep sed gawk diffutils patch \
+        less file tree bc man-db \
+        curl wget net-tools iputils-ping dnsutils netcat-openbsd socat telnet \
+        openssh-client rsync \
+        vim nano \
+        git \
+        build-essential cmake make \
+        perl ruby-full lua5.4 \
+        jq xmlstarlet sqlite3 \
+        ffmpeg pandoc imagemagick texlive-latex-base \
+        zip unzip tar gzip bzip2 xz-utils zstd p7zip-full \
+        procps htop lsof strace sysstat \
+        sudo tmux screen tini iptables ipset dnsmasq \
+        ca-certificates gnupg apt-transport-https \
+        libcap2-bin \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://get.docker.com | sh
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir \
+    numpy pandas scipy scikit-learn \
+    matplotlib seaborn plotly \
+    jupyter ipython \
+    requests beautifulsoup4 lxml \
+    sqlalchemy psycopg2-binary \
+    pyyaml toml jsonlines \
+    tqdm rich \
+    openpyxl weasyprint \
+    python-docx python-pptx pypdf csvkit
+
+# git clone stands in for upstream's `COPY . .` -- our source lives in a
+# separate fork repo, not this one. FORK_SHA exists purely to bust
+# Docker's build cache: `git clone --branch main` is byte-identical
+# text on every build regardless of what commit main actually points
+# to, so without something that changes per-build in this RUN step,
+# a cached layer silently ships a stale fork clone forever. CI (see
+# docker.yml) resolves the fork's current SHA via `git ls-remote` and
+# passes it explicitly on every run.
+ARG FORK_REF=main
+ARG FORK_SHA=""
+RUN echo "Building open-terminal-app-fork ref=${FORK_REF} sha=${FORK_SHA:-unpinned}" \
+    && git clone --branch "${FORK_REF}" --depth 1 \
+        https://github.com/dvystrcil/open-terminal-app-fork.git /build \
+    && cd /build \
+    && pip install --no-cache-dir . \
+    && cp "$(readlink -f "$(which python3)")" /usr/local/bin/python3-ot \
+    && setcap cap_setgid+ep /usr/local/bin/python3-ot \
+    && sed -i "1s|.*|#!/usr/local/bin/python3-ot|" "$(which open-terminal)" \
+    && rm -rf /build
+
+RUN useradd -m -s /bin/bash user && echo 'user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+# Matches upstream's own Dockerfile tail exactly -- these are image
+# metadata (ENV/WORKDIR/EXPOSE), not filesystem content, so without
+# restating them here stage 2 (FROM fork-build) would silently lose
+# them. The old single-stage setup got these for free by inheriting
+# straight from the pre-built upstream image; building from source
+# here means restating what upstream's own Dockerfile sets.
+ENV SHELL=/bin/bash
+ENV PATH="/home/user/.local/bin:${PATH}"
+WORKDIR /home/user
+EXPOSE 8000
+
+# === STAGE 2: homelab wrapper -- tools + entrypoint on top of stage 1 ===
+FROM fork-build
 
 USER root
 

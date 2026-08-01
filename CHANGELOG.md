@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- 🔒🔌📄 **The `open_terminal/` fixes documented in this CHANGELOG were never actually deployed** — this repo's Dockerfile has always been a thin wrapper around a pre-built upstream image (`FROM .../ghcr-proxy/open-webui/open-terminal:latest`); it never built or installed this repo's own vendored `open_terminal/` package. Every fix this CHANGELOG has described as applied to `open_terminal/main.py` (0.20.40's connection-reset fix, 0.20.41's log-retention fix, and others discovered along the way) was real code, tested, and merged here -- but the running container has always been unmodified upstream code plus wrapper tooling, regardless. See [homelab#822](https://github.com/dvystrcil/homelab/issues/822) for the full incident.
+
+### Changed
+
+- 🍴 **Now builds from `dvystrcil/open-terminal-app-fork`, not upstream `:latest`, temporarily** — Stage 1 of the Dockerfile builds `open_terminal` from source (a real fork, `git clone` + `pip install .`, mirroring upstream's own Dockerfile) instead of pulling the pre-built upstream image. The fork carries the fixes above plus two more found in the same audit (two-tier process-result expiry; new `insert_after`/`append_to_section`/`append` file endpoints with a defensive `replace_file_content` check), submitted upstream as [open-webui/open-terminal#148](https://github.com/open-webui/open-terminal/pull/148), [#149](https://github.com/open-webui/open-terminal/pull/149), [#150](https://github.com/open-webui/open-terminal/pull/150), [#151](https://github.com/open-webui/open-terminal/pull/151). Revert to a plain `FROM .../open-terminal:latest` once all four merge and a release picks them up.
+- 🗑️ **Removed the vendored `open_terminal/` package and its tests** — dead weight now that the actual fixes live in a real fork with a real upstream relationship, not a disconnected local copy that nothing built. `tests/test_actor_env.py` (tests `helpers/bible_bridge.py`, which *is* deployed) is kept; the rest tested only the vendored copy. `pyproject.toml`, `dev.sh`, and `.python-version` (all specific to developing that vendored package) removed too.
+- 🔑 **Ported a homelab-specific fix to the fork** (not submitted upstream -- it's specific to our own GitHub App token-file convention): `refresh_github_token_env()` re-reads the current token from disk into the long-lived Python process's own `os.environ` before every subprocess spawn. Closes a gap `BASH_ENV`-based shell-profile sourcing doesn't cover (the plain-shell and PTY spawn paths never source `/etc/profile.d`). See [dvystrcil/homelab#701](https://github.com/dvystrcil/homelab/issues/701).
+
 ## [0.20.41] - 2026-07-31
 
 ### Fixed

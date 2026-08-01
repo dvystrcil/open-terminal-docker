@@ -102,17 +102,19 @@ Plus everything upstream exposes: `OPEN_TERMINAL_PACKAGES`, `OPEN_TERMINAL_PIP_P
 ## Repository layout
 
 ```
-Dockerfile           # FROM ghcr.io/open-webui/open-terminal:latest + tooling
+Dockerfile           # builds open_terminal from dvystrcil/open-terminal-app-fork + tooling
 entrypoint.sh        # secrets resolution, dotfile seeding, helpers, egress, bridge
 helpers/
   bible_bridge.py    # multi-project Story Bible HTTP bridge
   create-pr.sh       # five-step PR workflow
   CONTAINER_TEST_PLAN.md
-open_terminal/       # vendored copy of the upstream Python package (reference)
-dev.sh               # local dev: uv run uvicorn open_terminal.main:app --reload
 ```
 
-> The `open_terminal/` source tree is checked in for reference and local debugging via [dev.sh](dev.sh). The published image runs the upstream `open-terminal` binary from the base image, **not** this local copy — to ship code changes you would need to either pin a custom upstream version or restructure the Dockerfile to install from this tree.
+> **This repo has no vendored copy of `open_terminal`'s Python source.** An earlier attempt at that (checked-in, tested, and documented in this CHANGELOG as if deployed) was never actually built into the image -- the Dockerfile just pulled a pre-built upstream image the whole time. See [homelab#822](https://github.com/dvystrcil/homelab/issues/822).
+>
+> The fix: this repo now genuinely builds `open_terminal` from source, via a real fork, [`dvystrcil/open-terminal-app-fork`](https://github.com/dvystrcil/open-terminal-app-fork) -- Dockerfile stage 1 does `git clone` + `pip install .` against it, mirroring upstream's own build. The fork carries a handful of fixes submitted upstream ([open-webui/open-terminal#148](https://github.com/open-webui/open-terminal/pull/148), [#149](https://github.com/open-webui/open-terminal/pull/149), [#150](https://github.com/open-webui/open-terminal/pull/150), [#151](https://github.com/open-webui/open-terminal/pull/151)) plus one homelab-specific patch (GH_TOKEN refresh, not upstream-appropriate). This is meant to be temporary: once those PRs merge into a real upstream release, switch stage 1 back to a plain `FROM .../open-terminal:latest` and the fork goes away.
+>
+> If you need to change `open_terminal`'s own behavior (not just this wrapper's tooling), make the change in the fork, not here.
 
 ## License
 
