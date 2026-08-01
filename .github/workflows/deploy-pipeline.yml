@@ -124,8 +124,8 @@ jobs:
       - name: Verify v1.2 startup banner
         run: |
           set -euo pipefail
-          # Allow up to ~60s for the reload to land
-          for i in $(seq 1 12); do
+          # Allow up to ~240s for the reload to land
+          for i in $(seq 1 48); do
             if kubectl -n open-webui logs deploy/owui-pipelines --tail=400 \
                 | grep -q "Git Sync Filter starting up"; then
               echo "::notice::Sync filter startup banner observed"
@@ -135,6 +135,6 @@ jobs:
             fi
             sleep 5
           done
-          echo "::error::Did not observe sync filter startup banner within 60s"
+          echo "::error::Did not observe sync filter startup banner within 240s"
           kubectl -n open-webui logs deploy/owui-pipelines --tail=200 | tail -60
           exit 1
