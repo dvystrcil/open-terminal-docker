@@ -10,6 +10,9 @@ Changelog:
   1.1 — Added version constant and /version endpoint. No functional changes.
   1.2 — ThreadingHTTPServer so a slow /bible/pull (git network op) no longer
         serializes fast /bible reads from concurrent callers.
+  1.3 — Added /bible/recover — destructive git reset --hard to origin/main
+        for the divergence case /bible/pull's --ff-only refuses to touch
+        (homelab#176).
 
 Runs in the open-terminal pod. Exposes git-cloned story bible projects
 over HTTP so the Fiction Writing Filter (in the pipelines pod) can read
@@ -36,6 +39,7 @@ Endpoints:
   GET  /bible?project=alpha&task_type=CONTINUITY — read bible files
   POST /bible/write                              — write/append + git commit
   POST /bible/pull                               — trigger git pull on a project
+  POST /bible/recover                            — destructive reset to origin/main (confirm:true required)
   POST /bible/sync                               — stage all + commit + push
   POST /bible/pr                                 — create branch + PR
 
@@ -67,7 +71,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("bible_bridge")
 
-VERSION      = "1.2"
+VERSION      = "1.3"
 BIBLE_ROOT   = os.environ.get("BIBLE_ROOT", "/home/u3aa02715/fiction")
 BRIDGE_PORT  = int(os.environ.get("BRIDGE_PORT", "8765"))
 BRIDGE_TOKEN = os.environ.get("BRIDGE_TOKEN", "")
@@ -216,6 +220,89 @@ def git_pull(project_path: str) -> tuple[bool, str]:
         return False, msg
     log.info(f"git pull: {out or 'already up to date'}")
     return True, out
+
+
+def git_recover(project_path: str, confirm: bool) -> tuple[bool, dict]:
+    """Destructively reset a diverged local `GIT_BRANCH` to match
+    `GIT_REMOTE/GIT_BRANCH`. The residual failure mode git_pull's
+    --ff-only can't fix: local main has commits origin doesn't (post-
+    squash-merge or rebased-force-push), which needs `git reset --hard`.
+
+    Refuses without `confirm=True` (deliberate footgun-guard — this
+    endpoint destroys local commits) and refuses if there are
+    uncommitted changes (no auto-data-loss). homelab#176.
+
+    Returns (ok, payload) where payload is the exact response body
+    (the HTTP handler forwards it as-is, adding no extra keys).
+    """
+    if not confirm:
+        return False, {"ok": False, "status": "confirm_required"}
+
+    st_ok, status_out = git(project_path, "status", "--porcelain")
+    if st_ok and status_out.strip():
+        msg = (
+            f"recover: working tree has uncommitted changes; refusing to "
+            f"reset --hard. Resolve manually: commit/stash changes, then retry."
+        )
+        log.warning(msg)
+        return False, {"ok": False, "status": "uncommitted_changes_present", "porcelain": status_out}
+
+    cb_ok, current_branch = git(project_path, "branch", "--show-current")
+    current_branch = current_branch.strip() if cb_ok else ""
+
+    head_ok, head_sha = git(project_path, "rev-parse", "--short", "HEAD")
+    head_sha = head_sha.strip() if head_ok else "unknown"
+
+    fetch_ok, fetch_out = git(project_path, "fetch", GIT_REMOTE, GIT_BRANCH)
+    if not fetch_ok:
+        return False, {"ok": False, "status": "fetch_failed", "detail": fetch_out}
+
+    log_ok, log_out = git(
+        project_path, "log", f"{GIT_REMOTE}/{GIT_BRANCH}..HEAD", "--format=%h %s"
+    )
+    commits_dropped = []
+    if log_ok and log_out.strip():
+        for line in log_out.strip().split("\n"):
+            sha, _, subject = line.partition(" ")
+            commits_dropped.append({"sha": sha, "subject": subject})
+
+    if current_branch != GIT_BRANCH:
+        co_ok, co_out = git(project_path, "checkout", GIT_BRANCH)
+        if not co_ok:
+            msg = f"recover: failed to switch to '{GIT_BRANCH}': {co_out}"
+            log.warning(msg)
+            return False, {"ok": False, "status": "checkout_failed", "detail": co_out}
+
+    reset_ok, reset_out = git(
+        project_path, "reset", "--hard", f"{GIT_REMOTE}/{GIT_BRANCH}"
+    )
+    if not reset_ok:
+        log.warning(f"recover: reset --hard failed: {reset_out}")
+        return False, {"ok": False, "status": "reset_failed", "detail": reset_out}
+
+    new_head_ok, new_head_sha = git(project_path, "rev-parse", "--short", "HEAD")
+    new_head_sha = new_head_sha.strip() if new_head_ok else "unknown"
+    subj_ok, new_head_subject = git(project_path, "log", "-1", "--format=%s")
+    new_head_subject = new_head_subject.strip() if subj_ok else ""
+
+    log.info(
+        f"recover: abandoned '{current_branch or GIT_BRANCH}'@{head_sha} "
+        f"({len(commits_dropped)} commit(s) dropped) -> "
+        f"'{GIT_BRANCH}'@{new_head_sha}"
+    )
+    return True, {
+        "ok": True,
+        "abandoned": {
+            "branch": current_branch or GIT_BRANCH,
+            "head_sha": head_sha,
+            "commits_dropped": commits_dropped,
+        },
+        "now_at": {
+            "branch": GIT_BRANCH,
+            "head_sha": new_head_sha,
+            "head_subject": new_head_subject,
+        },
+    }
 
 
 # ── Bible read ────────────────────────────────────────────────────────────────
@@ -513,6 +600,21 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return
             ok, out = git_pull(project_path)
             self._send_json(200 if ok else 500, {"ok": ok, "output": out})
+
+        elif parsed.path == "/bible/recover":
+            project_path, err = resolve_project(body.get("project"))
+            if err:
+                self._send_json(400, {"error": err})
+                return
+            confirm = body.get("confirm", False)
+            ok, payload = git_recover(project_path, confirm)
+            if ok:
+                code = 200
+            elif payload.get("status") in ("confirm_required", "uncommitted_changes_present"):
+                code = 400
+            else:
+                code = 500
+            self._send_json(code, payload)
 
         elif parsed.path == "/bible/sync":
             project_path, err = resolve_project(body.get("project"))
