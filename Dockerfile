@@ -20,7 +20,7 @@
 # `FROM harbor-core.../ghcr-proxy/open-webui/open-terminal:latest`
 # (see homelab#822). Mirrors upstream's own Dockerfile build steps
 # exactly, substituting a git clone of our fork for `COPY . .`.
-FROM python:3.14.6 AS fork-build
+FROM python:3.14.7 AS fork-build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         coreutils findutils grep sed gawk diffutils patch \
