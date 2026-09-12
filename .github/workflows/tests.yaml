@@ -1,0 +1,54 @@
+name: tests
+
+# 12 unit tests live in tests/ and NOTHING ran them.
+#
+# Measured 2026-09-12 across the account: seven repos had test files that no
+# PR check executed. All 12 here pass hermetically — no network, no
+# container, no live service — so this is not a backlog of broken tests. It
+# is a suite that was written and never consulted.
+#
+# A test suite nothing executes is not coverage. It is a file.
+
+on:
+  pull_request:
+    paths:
+      - 'tests/**'
+      - '.github/workflows/tests.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/**'
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+
+      - name: Install pytest
+        run: python3 -m pip install --quiet pytest
+
+      - name: Unit tests
+        run: python3 -m pytest tests/ -q --strict-markers
+
+      # pytest exits 5 and prints "no tests ran" when it collects nothing,
+      # which reads as success in some invocations. Assert the count so this
+      # check cannot go green having executed nothing — the exact failure it
+      # was added to end.
+      - name: Assert the suite actually ran
+        run: |
+          set -euo pipefail
+          count=$(python3 -m pytest tests/ -q --collect-only 2>/dev/null \
+                  | grep -cE '^tests/' || true)
+          echo "collected $count test(s)"
+          if [ "$count" -lt 6 ]; then
+            echo "::error::collected only $count tests; 12 were present when this check was written."
+            exit 1
+          fi
