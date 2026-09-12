@@ -1,0 +1,76 @@
+name: tests
+
+# 12 unit tests live in tests/ and NOTHING ran them.
+#
+# Measured 2026-09-12 across the account: seven repos had test files that no
+# PR check executed. All 12 here pass hermetically — no network, no
+# container, no live service — so this is not a backlog of broken tests. It
+# is a suite that was written and never consulted.
+#
+# A test suite nothing executes is not coverage. It is a file.
+
+on:
+  pull_request:
+    paths:
+      - 'tests/**'
+      - '.github/workflows/tests.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/**'
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+
+      - name: Install pytest
+        run: python3 -m pip install --quiet pytest
+
+      - name: Unit tests
+        run: python3 -m pytest tests/ -q --strict-markers
+
+      # pytest exits 5 and prints "no tests ran" when it collects nothing,
+      # which reads as success in some invocations. Assert the count so this
+      # check cannot go green having executed nothing — the exact failure it
+      # was added to end.
+      # Parse pytest's SUMMARY line ("12 tests collected in 0.01s"), not the
+      # per-test node-id lines. The node-id format is version-dependent --
+      # `--collect-only` without `-q` prints `<Module ...>` instead -- so a
+      # format change would have silently counted zero and failed a healthy
+      # suite. Flagged in review on dvystrcil/open-terminal-docker#76.
+      #
+      # A count that cannot be READ is not a count of zero. The earlier
+      # version ended in `|| true`, which turned a parse miss into 0 and a
+      # hard failure; that is the same "absent must not read as zero" rule
+      # dvystrcil/coverage-action enforces, broken here by its own author.
+      # Now an unreadable count fails with its own distinct message.
+      #
+      # The threshold is still worth having even though pytest already exits
+      # 5 on ZERO collection (so the run step above fails on its own). Exit 5
+      # cannot see a PARTIAL collapse -- a broken conftest or a renamed
+      # directory that collects 3 of 12 exits 0 and passes.
+      - name: Assert the suite actually ran
+        run: |
+          set -euo pipefail
+          summary=$(python3 -m pytest tests/ -q --collect-only 2>/dev/null | tail -5)
+          count=$(printf '%s\n' "$summary" \
+                  | sed -n 's/^\([0-9][0-9]*\) tests\? collected.*/\1/p' | tail -1)
+          if [ -z "$count" ]; then
+            echo "::error::could not read a collection count from pytest output. That is not zero tests -- it means this assertion could not be evaluated, so it fails rather than guessing."
+            printf '%s\n' "$summary"
+            exit 1
+          fi
+          echo "collected $count test(s)"
+          if [ "$count" -lt 6 ]; then
+            echo "::error::collected only $count tests; 12 were present when this check was written. Either the suite shrank sharply or collection is broken."
+            exit 1
+          fi
