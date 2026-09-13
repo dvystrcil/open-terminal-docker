@@ -1,0 +1,7 @@
+{
+  "_comment": "Floors enforced by dvystrcil/coverage-action. Measured 2026-09-12: 12 tests, lines 12.84% / branches 9.05% over 608 statements in helpers/. Floors sit ~0.85 under measured -- headroom for churn, close enough that the gate deploys quiet. If CI reports a different figure than this, CI wins: the gate runs there. Raise them when the gate reports ratchet_ready.",
+  "floors": {
+    "lines": 12.0,
+    "branches": 8.2
+  }
+}

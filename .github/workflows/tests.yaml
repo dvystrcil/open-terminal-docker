@@ -13,6 +13,11 @@ on:
   pull_request:
     paths:
       - 'tests/**'
+      # The baseline holds the floors this gate enforces. Without it
+      # here, a PR that LOWERS a floor does not trigger the check that
+      # would validate the new one — the one file whose entire purpose
+      # is to be checked, exempt from checking.
+      - '.coverage-baseline.json'
       - '.github/workflows/tests.yaml'
   push:
     branches: [main]
@@ -74,3 +79,38 @@ jobs:
             echo "::error::collected only $count tests; 12 were present when this check was written. Either the suite shrank sharply or collection is broken."
             exit 1
           fi
+
+  # Coverage is gated separately from the suite above: that one says the
+  # assertions hold, this says they were REACHED and that the suite ran at
+  # all. Floors live in .coverage-baseline.json so lowering one is a
+  # reviewable diff rather than a quiet edit to a number in workflow YAML.
+  #
+  # A green run here is evidence the harness ran, not that the code is
+  # correct. Coverage says a line executed, not that anything would notice if
+  # it were wrong -- on dvystrcil/n8n-workflow at 99.90% line coverage, five
+  # real mutations survived.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Install dependencies
+        run: |
+          python3 -m pip --version >/dev/null 2>&1 || {
+            echo "::error::python3 -m pip is unavailable — an environment problem, not a PyPI one."
+            exit 1
+          }
+          for attempt in 1 2 3; do
+            python3 -m pip install --quiet coverage pytest && exit 0
+            echo "::warning::pip install failed (attempt ${attempt}/3) — retrying"
+            sleep $((attempt * 10))
+          done
+          echo "::error::pip install failed three times"
+          exit 1
+      - uses: dvystrcil/coverage-action@v1
+        with:
+          runtime: python
+          test_command: >-
+            python3 -m coverage run --branch --source=helpers -m pytest tests/ -q
