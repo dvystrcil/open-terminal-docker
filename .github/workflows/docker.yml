@@ -157,6 +157,6 @@ jobs:
 
       - name: Create GitHub release
         if: github.event_name != 'workflow_dispatch' || inputs.release
-        uses: dvystrcil/release-action@v0.2.1
+        uses: dvystrcil/release-action@v1
         with:
           token: ${{ steps.app-token.outputs.token }}
