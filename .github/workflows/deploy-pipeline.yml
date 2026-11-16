@@ -24,10 +24,10 @@ jobs:
 
     steps:
       - name: Checkout this repo
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Fetch secrets from Infisical
-        uses: Infisical/secrets-action@v1.0.18
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: ${{ vars.INFISICAL_IDENTITY_ID }}
@@ -39,7 +39,7 @@ jobs:
 
       - name: Mint cross-repo token via CICD App
         id: app-token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
         with:
           client-id: ${{ env.CICD_APP_CLIENT_ID }}
           private-key: ${{ env.CICD_APP_PRIVATE_KEY }}
@@ -47,7 +47,7 @@ jobs:
           owner: dvystrcil
 
       - name: Checkout homelab (for owui-import-pipeline.sh)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: dvystrcil/homelab
           path: homelab
@@ -56,7 +56,7 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Install kubectl
-        uses: azure/setup-kubectl@v5
+        uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5
         with:
           version: 'latest'
 

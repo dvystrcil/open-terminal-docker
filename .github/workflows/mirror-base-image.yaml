@@ -22,7 +22,7 @@ jobs:
       # to upstream and the comparison can never report a change.
       - name: Restore last-seen upstream digest
         id: digest-cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .upstream-digest
           key: upstream-digest-${{ env.UPSTREAM_IMAGE }}-${{ github.run_id }}
