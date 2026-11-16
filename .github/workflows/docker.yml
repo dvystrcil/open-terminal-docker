@@ -32,10 +32,10 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Fetch secrets from Infisical
-        uses: Infisical/secrets-action@v1.0.18
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: ${{ vars.INFISICAL_IDENTITY_ID }}
@@ -46,15 +46,15 @@ jobs:
           domain: http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080
 
       - name: Log in to Harbor (internal)
-        uses: docker/login-action@v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.INTERNAL_REGISTRY }}
           username: ${{ env.HB_USERNAME }}
           password: ${{ env.HB_PASSWORD }}
 
-      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
         with:
           buildkitd-config-inline: |
             [registry."harbor-core.harbor.svc.cluster.local"]
@@ -76,7 +76,7 @@ jobs:
           echo "Building against fork main @ $sha"
 
       - name: Build and push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: Dockerfile
@@ -109,7 +109,7 @@ jobs:
 
     steps:
       - name: Fetch secrets from Infisical
-        uses: Infisical/secrets-action@v1.0.18
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: ${{ vars.INFISICAL_IDENTITY_ID }}
@@ -120,19 +120,19 @@ jobs:
           domain: http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080
 
       - name: Log in to Harbor (internal)
-        uses: docker/login-action@v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.INTERNAL_REGISTRY }}
           username: ${{ env.HB_USERNAME }}
           password: ${{ env.HB_PASSWORD }}
       
-      - uses: actions/create-github-app-token@v3
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
         id: app-token
         with:
           client-id: ${{ env.CICD_APP_CLIENT_ID }}
           private-key: ${{ env.CICD_APP_PRIVATE_KEY }}
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
         with:
           buildkitd-config-inline: |
             [registry."harbor-core.harbor.svc.cluster.local"]
