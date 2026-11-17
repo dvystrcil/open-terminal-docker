@@ -23,6 +23,16 @@ file_env() {
     unset "$fileVar"
 }
 
+# -----------------------------------------------------------------------
+# Re-create the users whose homes persist on the /home volume, with the
+# uid/gid already on disk (open-terminal-docker#89). /etc/passwd resets
+# on every restart; without this, upstream's ensure_os_user() re-runs
+# useradd + `chown -R` of the whole NFS home on each user's first request,
+# which takes minutes. First, before any background loop or server starts.
+# Never fails startup: anything it can't map is left to ensure_os_user().
+# -----------------------------------------------------------------------
+python3 /app/helpers/restore_home_users.py || true
+
 file_env 'OPEN_TERMINAL_API_KEY'
 
 # Also support _FILE variants for GitHub App credentials
