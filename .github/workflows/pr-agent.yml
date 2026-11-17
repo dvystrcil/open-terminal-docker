@@ -18,7 +18,7 @@ jobs:
     name: Run PR Agent on PRs and comments
     steps:
       - name: PR Agent action
-        uses: qodo-ai/pr-agent@68826a52863029351b82bbca79b1c60549193c09 # main
+        uses: qodo-ai/pr-agent@729f82301d7542030f05aeba6cca383e088e66d0 # main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CONFIG.MODEL: "ollama/qwen3.6:35b"
