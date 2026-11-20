@@ -34,9 +34,11 @@
 #     archive key (Signed-By), and a snapshot is old data on purpose.
 #   - No TLS bootstrap: python:3.15.2 already ships ca-certificates, so the
 #     direct https:// snapshot works from the first fetch.
-#   - The rewritten debian.sources stays in the image (stage 2 inherits it), so
-#     a runtime `apt-get install` (OPEN_TERMINAL_PACKAGES, or a user's sudo apt)
-#     also reads this snapshot through the same URL the build used.
+#   - Pinned at build time ONLY. Stage 1 backs up the base image's own
+#     debian.sources before the rewrite; stage 2 (the final image) restores it
+#     after its last apt install. The shipped image never names the CI-only
+#     apt-cacher-ng URL, and runtime apt (OPEN_TERMINAL_PACKAGES, sudo users)
+#     reads the live Debian mirror exactly as before the pin.
 #   - tests/apt-snapshot-test.sh proves it builds with the live mirror blocked and
 #     fails clearly with the snapshot source blocked.
 ARG APT_SNAPSHOT=20261119T000000Z
@@ -73,6 +75,8 @@ ARG APT_SNAPSHOT_BASE
 # is derived from it.
 RUN archive="${APT_SNAPSHOT_BASE%/debian}" && \
     test "${archive}/debian" = "${APT_SNAPSHOT_BASE}" && \
+    mkdir -p /usr/local/share/apt-snapshot-pin && \
+    cp /etc/apt/sources.list.d/debian.sources /usr/local/share/apt-snapshot-pin/debian.sources.orig && \
     sed -i -E \
       -e "s|^URIs: http://deb\.debian\.org/debian-security/?$|URIs: ${archive}/debian-security/${APT_SNAPSHOT}/\nCheck-Valid-Until: no|" \
       -e "s|^URIs: http://deb\.debian\.org/debian/?$|URIs: ${archive}/debian/${APT_SNAPSHOT}/\nCheck-Valid-Until: no|" \
@@ -156,7 +160,10 @@ FROM fork-build
 USER root
 
 # === CONSOLIDATED APT INSTALLATIONS (SINGLE LAYER) ===
-# This dramatically reduces layers and improves caching
+# This dramatically reduces layers and improves caching.
+# This is the last apt step that reads the snapshot pin, so it ends by
+# restoring the base image's live debian.sources (pinned at build time only,
+# see the top of this file).
 RUN apt-get update --error-on=any -o Acquire::Retries=3 && apt-get install -y --no-install-recommends \
         ca-certificates \
         apt-transport-https \
@@ -200,7 +207,9 @@ RUN apt-get update --error-on=any -o Acquire::Retries=3 && apt-get install -y --
         gnupg2 \
         terraform \
         pandoc \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && cp /usr/local/share/apt-snapshot-pin/debian.sources.orig /etc/apt/sources.list.d/debian.sources \
+    && rm -rf /usr/local/share/apt-snapshot-pin
 
 RUN pip3 install --no-cache-dir PyJWT cryptography --break-system-packages    
 
