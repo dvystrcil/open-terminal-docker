@@ -17,6 +17,10 @@ env:
   INTERNAL_REGISTRY: harbor-core.harbor.svc.cluster.local
   PROJECT: open-terminal
   IMAGE_NAME: open-terminal
+  # apt reads the pinned Debian snapshot through the in-cluster apt-cacher-ng
+  # (homelab#1981, D-051). The URL names the cache, so a cache outage fails the
+  # build; it never falls back to the live mirror. Third-party apt repos stay live.
+  APT_SNAPSHOT_BASE: http://apt-cacher-ng.arc-runner.svc.cluster.local:3142/HTTPS///snapshot.debian.org/archive/debian
 
 jobs:
   build:
@@ -85,6 +89,7 @@ jobs:
           provenance: false
           build-args: |
             FORK_SHA=${{ steps.fork.outputs.sha }}
+            APT_SNAPSHOT_BASE=${{ env.APT_SNAPSHOT_BASE }}
           # homelab#822: dev-amd64/dev-arm64 are floating tags that
           # every push overwrites. release.yml's promote job used to
           # retag whichever images those floating tags currently

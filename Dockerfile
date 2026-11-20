@@ -1,3 +1,47 @@
+# apt reads a pinned Debian snapshot, never the live Debian mirror
+# (homelab#1981, D-051; design and tests: dvystrcil/homelab
+# architecture/apt-snapshot-image-builds.md; copied from
+# dvystrcil/mealie-mcp-docker#56). A mirror mid-sync can't fail a build, and the
+# Debian package set depends on APT_SNAPSHOT, not on the minute the build ran.
+#   - The pin is the repository itself: debian.sources' URIs point at
+#     <archive>/debian/<APT_SNAPSHOT>/ and <archive>/debian-security/<APT_SNAPSHOT>/
+#     on snapshot.debian.org. Not `--snapshot` or `Snapshot:`: those still fetch
+#     the live mirror alongside the snapshot (the doc's trap 1).
+#   - Every `apt-get update` in this file is `--error-on=any -o Acquire::Retries=3`.
+#     Without --error-on=any an unreachable source is a warning, apt keeps going,
+#     and the error surfaces later as "Unable to locate package", or not at all.
+#     The vendor scripts (nodesource setup_22.x, get.docker.com) run their own
+#     quiet `apt-get update`; the nodesource step re-runs it strictly before
+#     installing, and get.docker.com's install fails on its own if an index is
+#     missing (the lists are emptied after every apt step).
+#   - Third-party apt repos stay LIVE (D-051): nodesource, download.docker.com,
+#     pkgs.k8s.io, cli.github.com, apt.releases.hashicorp.com. Only Debian's own
+#     sources are pinned, and only Debian hosts are checked for live lines.
+#   - APT_SNAPSHOT is written once, here. The weekly bump job
+#     (homelab bin/bump-apt-snapshot.py) edits this line.
+#   - APT_SNAPSHOT_BASE is the `debian` repo URL, without the ID. The bump job
+#     probes it, so it must stay exactly https://snapshot.debian.org/archive/debian.
+#     `debian-security` is its sibling directory. In-cluster CI passes the
+#     apt-cacher-ng form,
+#     http://apt-cacher-ng.arc-runner.svc.cluster.local:3142/HTTPS///snapshot.debian.org/archive/debian.
+#     The URL names the cache, so if the cache is down the build fails; nothing
+#     falls back to the live mirror or to the snapshot direct.
+#   - Check-Valid-Until: no, on both stanzas (the doc's trap 4). Debian's
+#     trixie-security AND trixie-updates InRelease carry Valid-Until = Date + 7
+#     days (read from snapshot.debian.org 2026-11-19), so without it a pin older
+#     than a week fails apt's replay check. This switches off only that expiry
+#     check (sources.list(5)); apt still verifies every index against Debian's
+#     archive key (Signed-By), and a snapshot is old data on purpose.
+#   - No TLS bootstrap: python:3.15.2 already ships ca-certificates, so the
+#     direct https:// snapshot works from the first fetch.
+#   - The rewritten debian.sources stays in the image (stage 2 inherits it), so
+#     a runtime `apt-get install` (OPEN_TERMINAL_PACKAGES, or a user's sudo apt)
+#     also reads this snapshot through the same URL the build used.
+#   - tests/apt-snapshot-test.sh proves it builds with the live mirror blocked and
+#     fails clearly with the snapshot source blocked.
+ARG APT_SNAPSHOT=20261119T000000Z
+ARG APT_SNAPSHOT_BASE=https://snapshot.debian.org/archive/debian
+
 # === STAGE 1: build open_terminal from our fork, not upstream :latest ===
 #
 # TEMPORARY. dvystrcil/open-terminal-app-fork carries fixes not yet in
@@ -21,8 +65,21 @@
 # (see homelab#822). Mirrors upstream's own Dockerfile build steps
 # exactly, substituting a git clone of our fork for `COPY . .`.
 FROM python:3.15.2 AS fork-build
+ARG APT_SNAPSHOT
+ARG APT_SNAPSHOT_BASE
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Point apt at the snapshot (see the top of this file) and refuse to go on if
+# any live Debian source is left. The base must end in /debian: debian-security
+# is derived from it.
+RUN archive="${APT_SNAPSHOT_BASE%/debian}" && \
+    test "${archive}/debian" = "${APT_SNAPSHOT_BASE}" && \
+    sed -i -E \
+      -e "s|^URIs: http://deb\.debian\.org/debian-security/?$|URIs: ${archive}/debian-security/${APT_SNAPSHOT}/\nCheck-Valid-Until: no|" \
+      -e "s|^URIs: http://deb\.debian\.org/debian/?$|URIs: ${archive}/debian/${APT_SNAPSHOT}/\nCheck-Valid-Until: no|" \
+      /etc/apt/sources.list.d/debian.sources && \
+    test "$(grep -c "^URIs: ${archive}/debian\(-security\)\?/${APT_SNAPSHOT}/$" /etc/apt/sources.list.d/debian.sources)" -eq 2 && \
+    ! grep -rsE '^ *(deb |URIs:).*(deb|security)\.debian\.org' /etc/apt/sources.list /etc/apt/sources.list.d/ && \
+    apt-get update --error-on=any -o Acquire::Retries=3 && apt-get install -y --no-install-recommends \
         coreutils findutils grep sed gawk diffutils patch \
         less file tree bc man-db \
         curl wget net-tools iputils-ping dnsutils netcat-openbsd socat telnet \
@@ -41,6 +98,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get update --error-on=any -o Acquire::Retries=3 \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
@@ -99,7 +157,7 @@ USER root
 
 # === CONSOLIDATED APT INSTALLATIONS (SINGLE LAYER) ===
 # This dramatically reduces layers and improves caching
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update --error-on=any -o Acquire::Retries=3 && apt-get install -y --no-install-recommends \
         ca-certificates \
         apt-transport-https \
         gnupg \
@@ -117,7 +175,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(. /etc/os-release && echo $VERSION_CODENAME) main" \
         | tee /etc/apt/sources.list.d/hashicorp.list \
-    && apt-get update \
+    && apt-get update --error-on=any -o Acquire::Retries=3 \
     && apt-get install -y --no-install-recommends \
         kubectl \
         gh \

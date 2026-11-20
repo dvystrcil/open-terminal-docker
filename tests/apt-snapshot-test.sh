@@ -78,14 +78,14 @@ if build "$LOGDIR/1.log" "${live[@]}"; then
   sec=$(grep -cE "Get:[0-9]+ [a-z]+://${src_host}[:/].*/debian-security/" "$LOGDIR/1.log" || true)
   others=$(grep -E "Get:[0-9]+ [a-z]+://" "$LOGDIR/1.log" \
     | grep -vE "Get:[0-9]+ [a-z]+://${src_host}[:/]" \
-    | grep -cvE "Get:[0-9]+ [a-z]+://${THIRD_PARTY_RE}[:/]" || true)
-  third=$(grep -cE "Get:[0-9]+ [a-z]+://${THIRD_PARTY_RE}[:/]" "$LOGDIR/1.log" || true)
+    | grep -cvE "Get:[0-9]+ [a-z]+://${THIRD_PARTY_RE}[:/ ]" || true)
+  third=$(grep -cE "Get:[0-9]+ [a-z]+://${THIRD_PARTY_RE}[:/ ]" "$LOGDIR/1.log" || true)
   livegets=$(grep -cE "$live_re" "$LOGDIR/1.log" || true)
   echo "   fetches from $src_host: $gets (debian-security: $sec); third-party (live, allowed): $third; from anywhere else: $others; live-mirror lines: $livegets"
   if [ "$gets" -lt 1 ] || [ "$sec" -lt 1 ] || [ "$others" -ne 0 ] || [ "$livegets" -ne 0 ]; then
     echo "FAIL: case 1 built, but apt did not read Debian only from the snapshot (both repos)"; fail=1
     grep -E "Get:[0-9]+ [a-z]+://" "$LOGDIR/1.log" | grep -vE "Get:[0-9]+ [a-z]+://${src_host}[:/]" \
-      | grep -vE "Get:[0-9]+ [a-z]+://${THIRD_PARTY_RE}[:/]" | head -10 || true
+      | grep -vE "Get:[0-9]+ [a-z]+://${THIRD_PARTY_RE}[:/ ]" | head -10 || true
   else
     echo "   ok"
     [ -z "${DPKG_OUT:-}" ] || docker run --rm --entrypoint dpkg-query "$IMG" -W >"$DPKG_OUT"
