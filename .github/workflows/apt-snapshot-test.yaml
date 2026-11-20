@@ -1,0 +1,45 @@
+name: apt-snapshot-test
+
+# Blocked-mirror build test for the apt snapshot pin (dvystrcil/homelab#1981,
+# D-051), on the ARC runner, through the in-cluster apt-cacher-ng:
+#   1. deb.debian.org / security.debian.org blocked -> the image still builds,
+#      every Debian apt fetch from the snapshot (via the cache); the
+#      third-party repos (nodesource, docker, k8s, gh, hashicorp) stay live;
+#   2. the cache blocked too -> the build fails with apt's own error, no fallback.
+# This is also the PR-time image build: docker.yml only builds on main, so a
+# weekly APT_SNAPSHOT bump PR (homelab bin/bump-apt-snapshot.py) is proven
+# here before it automerges.
+
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'tests/apt-snapshot-test.sh'
+      - '.github/workflows/apt-snapshot-test.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'tests/apt-snapshot-test.sh'
+      - '.github/workflows/apt-snapshot-test.yaml'
+  workflow_dispatch:
+
+env:
+  # Same URL docker.yml builds with.
+  APT_SNAPSHOT_BASE: http://apt-cacher-ng.arc-runner.svc.cluster.local:3142/HTTPS///snapshot.debian.org/archive/debian
+
+jobs:
+  blocked-mirror:
+    runs-on: open-terminal-docker-runner
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Blocked-mirror apt test
+        run: |
+          set -o pipefail
+          tests/apt-snapshot-test.sh | tee apt-snapshot-test.out
+
+      - name: Assert the apt test completed
+        run: test "$(tail -n 1 apt-snapshot-test.out)" = APT-SNAPSHOT-TEST-OK
