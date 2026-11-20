@@ -12,6 +12,8 @@
 #                      cli.github.com, hashicorp). They stay live (D-051), so
 #                      their fetches are allowed, but only from the hosts in
 #                      THIRD_PARTY_RE: any other host fails the case.
+#                      The final image must also ship the base image's live
+#                      Debian sources again (pinned at build time only).
 #   2. source-blocked  the snapshot source itself (the host in APT_SNAPSHOT_BASE:
 #                      snapshot.debian.org, or the apt-cacher-ng Service in CI) is
 #                      blocked the same way. The build must FAIL with apt's own
@@ -89,6 +91,24 @@ if build "$LOGDIR/1.log" "${live[@]}"; then
   else
     echo "   ok"
     [ -z "${DPKG_OUT:-}" ] || docker run --rm --entrypoint dpkg-query "$IMG" -W >"$DPKG_OUT"
+  fi
+  # Pinned at build time only: the FINAL image must ship the base image's own
+  # live Debian sources, so runtime apt (OPEN_TERMINAL_PACKAGES, sudo users)
+  # behaves as before. No apt-cacher-ng URL (cluster-internal CI cache), no
+  # snapshot, no Check-Valid-Until in any non-comment line. Comments are
+  # skipped because the base's debian.sources itself carries
+  # `# http://snapshot.debian.org/...` provenance comments.
+  srcs=$(docker run --rm --entrypoint sh "$IMG" -c \
+    'cat /etc/apt/sources.list.d/* /etc/apt/sources.list 2>/dev/null' || true)
+  leaked=$(printf '%s\n' "$srcs" | grep -vE '^[[:space:]]*#' \
+    | grep -cE 'apt-cacher-ng|snapshot\.debian\.org|Check-Valid-Until' || true)
+  liveuris=$(printf '%s\n' "$srcs" | grep -cE '^URIs: http://deb\.debian\.org/debian(-security)?/?$' || true)
+  echo "   final image apt sources: build-time pin lines left: $leaked; live deb.debian.org URIs: $liveuris"
+  if [ "$leaked" -ne 0 ] || [ "$liveuris" -ne 2 ]; then
+    echo "FAIL: the final image's apt sources are not the base image's live Debian sources"; fail=1
+    printf '%s\n' "$srcs" | grep -vE '^[[:space:]]*#' | grep -E 'URIs:|^deb |Check-Valid-Until' || true
+  else
+    echo "   ok"
   fi
 else
   echo "FAIL: case 1 did not build with the live mirror blocked"; fail=1
