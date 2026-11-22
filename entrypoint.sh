@@ -302,6 +302,22 @@ if [ -n "${OPEN_TERMINAL_NPM_PACKAGES:-}" ]; then
     fi
 fi
 
+# ── Bible bridge launcher ─────────────────────────────────────────────────────
+# BIBLE_ROOT lives inside a user's 2770 home. restore_home_users.py added this
+# user to that home's group with usermod, but this shell still has the groups
+# it started with, and the bridge (unlike the server, which has CAP_SETGID)
+# can't refresh them. `sudo -u <self>` re-reads /etc/group, so the bridge
+# starts with the new group. umask 002 keeps what it writes group-writable for
+# the home's owner. NFS's root mapping hid all of this until /home moved to
+# Longhorn (open-terminal-docker#89 follow-up).
+start_bible_bridge() {
+    [ -f /app/helpers/bible_bridge.py ] || return 0
+    echo "Starting bible bridge on port ${BRIDGE_PORT:-8765}..."
+    (sudo --preserve-env -u "$(id -un)" -- sh -c 'umask 002; exec python3 /app/helpers/bible_bridge.py' \
+        >> /tmp/bible_bridge.log 2>&1 < /dev/null) &
+    echo "Bible bridge PID: $!"
+}
+
 # -----------------------------------------------------------------------
 # Network egress filtering via DNS whitelist + iptables + capability drop
 # -----------------------------------------------------------------------
@@ -309,11 +325,7 @@ if [ "${OPEN_TERMINAL_ALLOWED_DOMAINS+set}" = "set" ]; then
     if ! command -v iptables &>/dev/null; then
         echo "WARNING: iptables not found — skipping egress firewall"
 
-        if [ -f /app/helpers/bible_bridge.py ]; then
-            echo "Starting bible bridge on port ${BRIDGE_PORT:-8765}..."
-            (python3 /app/helpers/bible_bridge.py >> /tmp/bible_bridge.log 2>&1) &
-            echo "Bible bridge PID: $!"
-        fi
+        start_bible_bridge
 
         exec open-terminal "$@"
     fi
@@ -365,20 +377,12 @@ if [ "${OPEN_TERMINAL_ALLOWED_DOMAINS+set}" = "set" ]; then
 
     echo "Egress firewall active — dropping CAP_NET_ADMIN permanently"
 
-    if [ -f /app/helpers/bible_bridge.py ]; then
-        echo "Starting bible bridge on port ${BRIDGE_PORT:-8765}..."
-        (python3 /app/helpers/bible_bridge.py >> /tmp/bible_bridge.log 2>&1) &
-        echo "Bible bridge PID: $!"
-    fi
+    start_bible_bridge
 
     exec capsh --drop=cap_net_admin -- -c "exec open-terminal $*"
 fi
 
 # ── Bible bridge ──────────────────────────────────────────────────────────────
-if [ -f /app/helpers/bible_bridge.py ]; then
-    echo "Starting bible bridge on port ${BRIDGE_PORT:-8765}..."
-    (python3 /app/helpers/bible_bridge.py >> /tmp/bible_bridge.log 2>&1) &
-    echo "Bible bridge PID: $!"
-fi
+start_bible_bridge
 
 exec open-terminal "$@"
