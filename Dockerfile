@@ -41,7 +41,7 @@
 #     reads the live Debian mirror exactly as before the pin.
 #   - tests/apt-snapshot-test.sh proves it builds with the live mirror blocked and
 #     fails clearly with the snapshot source blocked.
-ARG APT_SNAPSHOT=20261119T000000Z
+ARG APT_SNAPSHOT=20261123T210000Z
 ARG APT_SNAPSHOT_BASE=https://snapshot.debian.org/archive/debian
 
 # === STAGE 1: build open_terminal from our fork, not upstream :latest ===
