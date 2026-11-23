@@ -116,6 +116,20 @@ helpers/
 >
 > If you need to change `open_terminal`'s own behavior (not just this wrapper's tooling), make the change in the fork, not here.
 
+## Versioning — the numbers disagree on purpose
+
+Three version numbers describe this image, and they are **not** meant to match. Do not "reconcile" them.
+
+| Where | Number | What it means |
+|---|---|---|
+| This repo's release tags (`v0.20.N`) and the image tag | `0.20.x` | This wrapper image's own release line. `docker.yml`'s release step (`dvystrcil/release-action`) cuts the next `0.20.N`, which is then deployed via `dvystrcil/open-terminal`'s overlay. |
+| `pyproject.toml` in [`open-terminal-app-fork`](https://github.com/dvystrcil/open-terminal-app-fork) | `0.11.34` | The upstream `open_terminal` release the fork is based on. It moves only when the fork syncs upstream. |
+| `CHANGELOG.md` entries `0.1.0`–`0.11.30` here | `0.11.x` | History inherited from upstream, from before this repo became a wrapper. |
+
+The jump from `0.11.30` to `0.20.x` is deliberate. On 2026-03-31 this repo stopped being a copy of upstream's source and became a wrapper image (`f175f94`), and on 2026-04-02 it started its own release line (`0.20.3`, the first `0.20` tag). The gap tells you this image is on its own track and that `0.20.N` says nothing about upstream's version. Some of the bootstrapping work from that switch has since been removed, but the numbering stays.
+
+To learn which upstream code a given image contains, look at the fork sha in that build's log (`Building open-terminal-app-fork ref=… sha=…`), not at the version number.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
